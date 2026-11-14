@@ -1,0 +1,19 @@
+# Describe the local package, its runtime, and the command line entry point.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-algorithm-coach"
+version = "0.1.0"
+description = "A local, reliable algorithm training loop for AI Skills."
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
+dependencies = []
+
+[project.scripts]
+algorithm-coach = "algorithm_coach.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

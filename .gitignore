@@ -1,0 +1,60 @@
+# File purpose: Keep generated files, private state, and credentials out of source control.
+
+# Python bytecode and virtual environments.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Package and Skill build output.
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Tool caches and coverage reports.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local settings and credentials.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private training data and SQLite side files.
+private-data/
+backups/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Logs and temporary files.
+*.log
+*.log.*
+logs/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Local IDE and macOS files.
+.idea/
+*.iml
+.DS_Store
+._*
+
+# Frontend dependencies.
+node_modules/
