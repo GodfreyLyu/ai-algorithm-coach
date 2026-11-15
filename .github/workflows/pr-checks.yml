@@ -1,0 +1,104 @@
+# File purpose: Validate every pull request to main before owner review and merge.
+name: Pull request checks
+run-name: PR checks for ${{ github.ref_name }} by @${{ github.actor }}
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python-syntax:
+    name: Python syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Compile Python source, tools, Skill, and tests
+        run: python -m compileall -q src scripts skills tests
+      - name: Parse package, example, and ruleset TOML
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          for path in (Path("pyproject.toml"), *Path("examples").glob("*.toml"), *Path(".github/rulesets").glob("*.toml")):
+              tomllib.loads(path.read_text(encoding="utf-8"))
+          PY
+
+  workflow-syntax:
+    name: Workflow syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify actionlint 1.7.12
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
+      - name: Lint workflow syntax, expressions, and shell commands
+        run: '"${RUNNER_TEMP}/actionlint" -color'
+
+  logic-tests:
+    name: Logic tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Test rules, transactions, migrations, CLI, and standalone Skill
+        run: python -m unittest discover -s tests -v
+
+  documentation-content:
+    name: Documentation content
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Check file purposes and Python function contracts
+        run: python scripts/check_comments.py
+      - name: Check Markdown links, heading anchors, and code fences
+        run: python scripts/check_docs.py
+      - name: Test documentation checks and public CLI examples
+        run: python -m unittest discover -s tests -p test_documentation.py -v

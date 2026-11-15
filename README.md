@@ -221,12 +221,17 @@ No third-party test dependency is required.
 ```sh
 python3.12 -m unittest discover -s tests -v
 python3.12 scripts/check_comments.py
+python3.12 scripts/check_docs.py
 ```
 
 Tests use synthetic records in temporary directories.
 They cover the local feedback loop, repeat submissions, corrections, plan reruns,
 review rules, backup recovery, and the standalone Skill bundle.
 These tests do not establish compatibility with every AI client or deployment host.
+
+Every PR to `main` runs named syntax, logic, and documentation checks.
+See [GitHub Actions and owner review](docs/github-actions.md) for job names,
+local commands, repository rules, and the owner-authored PR limit.
 
 ## Architecture and next steps
 

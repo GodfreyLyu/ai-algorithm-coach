@@ -26,6 +26,8 @@ Run from the repository root:
 
 ```sh
 python3.12 -m unittest discover -s tests -v
+python3.12 scripts/check_comments.py
+python3.12 scripts/check_docs.py
 ```
 
 Add tests for observable behavior. Important cases include a lost response after
@@ -65,3 +67,9 @@ authentication cookies, or deployment credentials.
 Describe the user-visible result and the checks you ran.
 State any new runtime requirement or compatibility limit.
 Keep unrelated changes separate. Do not publish user data as a demonstration.
+
+Every PR to `main` must pass all four named CI checks.
+Only `@GodfreyLyu` can provide the required owner approval and merge the PR.
+New reviewable commits require a fresh approval. Resolve review threads before merge.
+Owner-authored PRs stay blocked because GitHub does not allow self-approval.
+See [GitHub Actions and repository rules](docs/github-actions.md) for setup and limits.
