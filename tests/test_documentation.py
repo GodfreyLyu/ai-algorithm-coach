@@ -133,18 +133,24 @@ class DocumentationTests(unittest.TestCase):
         """Verify the checked-in metadata and policy examples remain usable.
 
         Inputs: Both public TOML examples and a temporary workspace.
-        Outputs: An imported catalog item and an applied easy-array policy.
-        Logic: Import, propose, preview, activate the exact hash, and plan on its start date.
+        Outputs: A previewed import and an applied easy-array policy.
+        Logic: Guard the metadata import, then approve a policy and plan its start date.
         Dependencies: Public example files, the CLI, and synthetic temporary storage.
         """
         with tempfile.TemporaryDirectory() as temp:
             data = Path(temp) / "private"
             self._run_cli(data, ["init", "--timezone", "UTC"])
+            catalog_preview = self._run_cli(data, [
+                "catalog", "preview", "--file", "examples/catalog-extra.toml",
+            ])
+            self.assertTrue(catalog_preview["import_allowed"])
             imported = self._run_cli(data, [
                 "catalog", "import", "--file", "examples/catalog-extra.toml",
                 "--submission", "example-catalog-import",
+                "--expected-hash", catalog_preview["payload_hash"],
             ])
             self.assertEqual(imported["added_count"], 1)
+            self.assertEqual(imported["payload_hash"], catalog_preview["payload_hash"])
             proposal = self._run_cli(data, [
                 "policy", "propose", "--file", "examples/easy-arrays-policy.toml",
                 "--expected-revision", "0", "--submission", "example-policy-proposal",

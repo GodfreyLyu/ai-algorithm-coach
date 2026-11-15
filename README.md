@@ -5,9 +5,14 @@
 A local algorithm coach with a durable training record.
 The Skill handles the conversation. Python handles the rules. SQLite stores the facts.
 
-This version completes the local Skill loop first. It needs no database server,
-model API key, or web service. The planned feedback UI uses React with TypeScript
-and FastAPI. That UI is not part of this version.
+The local Skill loop needs no database server, model API key, or web service.
+The optional local panel uses React with TypeScript and FastAPI. It displays saved
+plans, records feedback in the same database, and shows topic completion rates.
+See the [Web setup guide](docs/web.md).
+
+Interactive Skill training uses `start-session` to prepare a plan and start or
+reuse that panel. A ready response contains the actual feedback link. Missing
+Web requirements leave chat feedback available and the saved plan intact.
 
 ## What works
 
@@ -23,6 +28,8 @@ and FastAPI. That UI is not part of this version.
 - Preview a policy before a host-approved activation.
 - Import additional problem metadata without replacing existing entries.
 - Migrate a version 1 workspace explicitly, with a backup.
+- View existing daily plans and save feedback through the optional local Web panel.
+- Read independent completion rates by topic and language, with sample counts.
 
 The default language is Java. The default daily plan target is five problems.
 Unfinished work uses the same plan capacity. A large backlog can use every slot.
@@ -52,6 +59,14 @@ export ALGORITHM_COACH_DATA_DIR="/path/to/private/coach-data"
 python3.12 skills/algorithm-coach/scripts/coach.py init --timezone UTC --daily-count 5 --language Java
 python3.12 skills/algorithm-coach/scripts/coach.py plan
 ```
+
+An existing empty data directory is not an initialized workspace. If a read returns
+`not_initialized`, confirm the intended path before any new setup. Only initialize
+a new workspace when the user explicitly requests it.
+
+`--data-dir` applies to one command. Initialization does not register a global path.
+The export above applies to its shell and child processes. Other terminals or
+host sessions may need that path again. Do not edit shell profiles automatically.
 
 The plan returns stable attempt IDs. Your Skill host uses those IDs internally.
 You can then say, for example, "The first problem is D. I spent 20 minutes."
@@ -126,7 +141,11 @@ See [policy rules and approval](docs/policies.md) for fields and examples.
 
 ## Add problem metadata
 
+Inspect a metadata batch before importing it:
+
 ```sh
+python3.12 skills/algorithm-coach/scripts/coach.py catalog preview \
+  --file examples/catalog-extra.toml
 python3.12 skills/algorithm-coach/scripts/coach.py catalog import \
   --file examples/catalog-extra.toml --submission example-catalog-import
 ```
@@ -135,6 +154,19 @@ Imports accept curated metadata only: ID, title, difficulty, tags, and an offici
 LeetCode link. Existing IDs cannot be changed. Exact repeats are safe.
 URL validation does not prove that metadata is correct or that a solution is AC.
 No remote scraping, full statement, paid content, or practice record is imported.
+
+The preview reports new, identical, and conflicting entries without writing.
+Invalid input returns a validation error. A well-formed conflicting batch returns
+`import_allowed: false`. Its `payload_hash` is the normalized import identity.
+Use `--expected-hash HASH_FROM_PREVIEW` on import to reject changed content.
+The guard is optional for existing clients. The write still checks live conflicts.
+Confirm the applied receipt and read back `catalog` before reporting success.
+
+For discovery, the host Agent can search official sources and prepare this file.
+The Python core has no network fetcher or model API dependency. A recommendation
+request does not authorize import. Read the [catalog discovery workflow](docs/catalog-discovery.md)
+for source checks, batch authorization, offline input, and Codex Desktop use.
+Catalog expansion does not activate a policy or rewrite an already published plan.
 
 ## Correct feedback
 
@@ -186,6 +218,7 @@ Do not store private records inside the bundle.
 | `config` | Read settings or update them with an expected revision. |
 | `practice` | Start an explicit redo or review as a new attempt. |
 | `catalog` | Read problem metadata and official links. |
+| `catalog preview` | Validate and classify a batch without changing saved state. |
 | `catalog import` | Append validated metadata from TOML or JSON. |
 | `capabilities` | Read the supported local features and limits. |
 | `policy get/history` | Read the effective policy, global version, or revision history. |
@@ -236,17 +269,18 @@ local commands, repository rules, and the owner-authored PR exception.
 ## Architecture and next steps
 
 The core is independent of the conversation and transport.
-CLI calls the same application service that a future API will call.
+CLI and the optional HTTP API call the same application service.
 The SQLite database is the only authority for this local workspace.
 Chat summaries and future browser caches are views or pending input.
 
 See the [architecture](docs/architecture.md), [data model](docs/data-model.md),
 [policy guide](docs/policies.md), [backup guide](docs/backup-restore.md),
-and [future UI contract](docs/future-ui.md).
+and [local UI contract](docs/future-ui.md).
 
-The next product phase adds React TypeScript forms and a FastAPI adapter.
-It must preserve the same attempt IDs, feedback revisions, and receipts.
-Remote API access, a running MCP server, cloud authentication, and deployment
+The optional React TypeScript forms and FastAPI adapter preserve the same attempt
+IDs, feedback revisions, and receipts. The Web panel is local-only. It does not
+include accounts, offline queues, plan generation, or policy editing.
+Remote Skill access, a running MCP server, cloud authentication, and deployment
 are not implemented here. A Skill has no built-in scheduler.
 An operating system or external service must trigger scheduled runs.
 

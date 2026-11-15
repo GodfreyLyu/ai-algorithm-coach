@@ -1,9 +1,10 @@
-"""Persist immutable training policies and preview their scheduling effects."""
+"""Persist local policies and safely preview or append catalog metadata."""
 
 from datetime import date, datetime, timedelta, timezone
+import re
 from uuid import uuid4
 
-from .catalog_validation import validate_catalog
+from .catalog_validation import CATALOG_METADATA_FIELDS, validate_catalog
 from .errors import CoachError
 from .policies import default_policy, eligibility, filter_catalog, policy_active, validate_plan_candidates, validate_policy
 from .rules import select_candidates
@@ -345,18 +346,79 @@ class PolicyMixin:
         catalog = self.list_problems()
         topics = sorted({tag for problem in catalog["problems"] for tag in problem["tags"]})
         difficulties = sorted({problem["difficulty"] for problem in catalog["problems"]})
-        return {"fields": list(default_policy()), "topics": topics, "difficulties": difficulties, "problem_ids": [problem["id"] for problem in catalog["problems"]], "catalog_version": catalog["catalog_version"], "problem_count": len(catalog["problems"]), "supports": {"hard_scope": True, "preferred_topics": True, "max_daily_count": True, "dated_policy": True, "metadata_import": True, "problem_statement_import": False, "remote_fetch": False}}
+        return {"fields": list(default_policy()), "topics": topics, "difficulties": difficulties, "problem_ids": [problem["id"] for problem in catalog["problems"]], "catalog_version": catalog["catalog_version"], "problem_count": len(catalog["problems"]), "supports": {"hard_scope": True, "preferred_topics": True, "max_daily_count": True, "dated_policy": True, "metadata_import": True, "metadata_import_preview": True, "metadata_import_hash_guard": True, "problem_statement_import": False, "remote_fetch": False}}
 
-    def import_catalog(self, problems: list[dict], submission_id: str) -> dict:
-        """Inputs: metadata-only problem records and a stable operation ID.
+    def preview_catalog(self, problems: list[dict]) -> dict:
+        """Classify one metadata batch without changing local training records.
+
+        Inputs: A non-empty list of five-field problem metadata objects.
+        Outputs: Normalized content, new and identical entries, conflicts, and a hash.
+        Logic: Validate format, then compare every ID in one deferred read snapshot.
+        Dependencies: validate_catalog, canonical hashing, and the existing local store.
+        """
+        normalized = validate_catalog(problems)
+        payload_hash = self._hash({"operation": "import_catalog", "problems": normalized})
+        connection = self._db()
+        owns_snapshot = not connection.in_transaction
+        if owns_snapshot:
+            connection.execute("BEGIN")
+        try:
+            current = self.list_problems()
+            lookup = {problem["id"]: problem for problem in current["problems"]}
+            known_tags = {tag for problem in current["problems"] for tag in problem["tags"]}
+            added = []
+            unchanged = []
+            conflicts = []
+            for problem in normalized:
+                existing = lookup.get(problem["id"])
+                if existing is None:
+                    added.append(problem)
+                    continue
+                existing = validate_catalog([existing])[0]
+                fields = [field for field in CATALOG_METADATA_FIELDS if existing[field] != problem[field]]
+                if fields:
+                    conflicts.append({"problem_id": problem["id"], "fields": fields,
+                                      "existing": existing, "incoming": problem})
+                else:
+                    unchanged.append(problem)
+            blockers = []
+            if conflicts:
+                blockers.append({"code": "catalog_conflict",
+                                 "message": "Existing problem metadata cannot be overwritten.",
+                                 "details": {"problem_ids": [conflict["problem_id"] for conflict in conflicts]}})
+            result = {
+                "metadata_valid": True, "import_allowed": not conflicts,
+                "catalog_version": current["catalog_version"], "payload_hash": payload_hash,
+                "normalized_problems": normalized, "new_problems": added,
+                "unchanged_problems": unchanged, "conflicts": conflicts, "blockers": blockers,
+                "unknown_tags": sorted({tag for problem in normalized for tag in problem["tags"]} - known_tags),
+                "verification": {"metadata_format_checked": True, "official_url_format_checked": True,
+                                 "remote_source_checked": False, "content_correctness_checked": False},
+            }
+            if owns_snapshot:
+                connection.commit()
+            return result
+        except BaseException:
+            if owns_snapshot:
+                connection.rollback()
+            raise
+
+    def import_catalog(self, problems: list[dict], submission_id: str, expected_hash: str | None = None) -> dict:
+        """Inputs: metadata records, an operation ID, and an optional preview hash.
         Outputs: a committed append-only import receipt.
 
-        Logic: accept identical records, reject overwrites, and version new metadata.
+        Logic: check the content guard, replay safely, and reject all conflicting batches.
         Dependencies: strict metadata validation and one SQLite transaction.
         """
         _text(submission_id, "Submission ID")
         normalized = validate_catalog(problems)
         payload_hash = self._hash({"operation": "import_catalog", "problems": normalized})
+        if expected_hash is not None:
+            if not isinstance(expected_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
+                raise CoachError("validation_error", "Expected catalog hash must be a lowercase SHA-256 digest.")
+            if expected_hash != payload_hash:
+                raise CoachError("content_hash_mismatch", "Catalog content changed after preview.",
+                                 {"expected_hash": expected_hash, "actual_hash": payload_hash})
         with storage.transaction(self._db()):
             replay = self._replay(submission_id, payload_hash)
             if replay is not None:

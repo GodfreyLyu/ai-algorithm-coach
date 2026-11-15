@@ -1,0 +1,26 @@
+{
+  "_comment": "Provide the local React TypeScript form and its Vite build commands.",
+  "name": "algorithm-coach-web",
+  "private": true,
+  "version": "0.4.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "tsc --project tsconfig.jsonc --noEmit && vite build && node ../scripts/build_web_manifest.mjs",
+    "typecheck": "tsc --project tsconfig.jsonc --noEmit",
+    "check-comments": "node ../scripts/check_frontend_comments.mjs",
+    "test:e2e": "node ../scripts/test_web_browser.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}

@@ -15,7 +15,7 @@ def check(root: Path) -> list[str]:
     failures = []
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
-        if not path.is_file() or any(part in {".git", ".venv", "__pycache__", "dist", "build"}
+        if not path.is_file() or any(part in {".git", ".venv", ".venv-web", "node_modules", "__pycache__", "dist", "build", "playwright-report", "test-results"}
                                      or part.endswith(".egg-info") for part in relative.parts):
             continue
         if path.suffix not in {".py", ".md", ".toml", ".yml", ".yaml"} and path.name not in {

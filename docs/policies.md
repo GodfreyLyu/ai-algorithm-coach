@@ -142,9 +142,18 @@ Scope eligibility still applies. No API or CLI allocation path may bypass it.
 array. A raw JSON array is rejected. Policy files are plain TOML or JSON objects
 whose keys are the policy fields; they do not use a `policy` wrapper.
 Each entry has `id`, `title`, `difficulty`, `tags`, and an official LeetCode `url`.
+Run `catalog preview --file PATH` first. It reports new and matching entries,
+all conflicting IDs, unknown training tags, and the normalized `payload_hash`.
+Malformed input returns the existing validation error instead of a partial preview.
+The preview does not reserve a version or create a receipt. It writes no records.
+Use `catalog import --file PATH --submission ACTION_ID --expected-hash HASH`
+to bind the write to the previewed content. Existing callers can omit the guard.
 The import is append-only. A matching duplicate is safe; conflicting metadata for
 an existing ID is rejected. It never replaces catalog data referenced by feedback.
 
 Accepted URL format is a source constraint, not semantic verification.
 Import does not retrieve a full statement or paid content.
 Use synthetic examples and public metadata only.
+Host networking, source checks, and import authorization are described in
+[catalog discovery](catalog-discovery.md). Importing metadata changes the candidate
+pool; it does not approve a scope change or force the next plan to select an item.

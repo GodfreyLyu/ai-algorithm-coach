@@ -18,7 +18,7 @@ Discuss changes to feedback meanings or mastery rules before changing them.
 
 The runtime core uses the Python standard library.
 Keep framework and client-specific code outside its rules and application service.
-The planned frontend uses React with TypeScript. Its API adapter will use FastAPI.
+The optional frontend uses React with TypeScript. Its API adapter uses FastAPI.
 
 ## Validation
 
@@ -29,6 +29,10 @@ python3.12 -m unittest discover -s tests -v
 python3.12 scripts/check_comments.py
 python3.12 scripts/check_docs.py
 ```
+
+For Web changes, also run the build, comment checks, HTTP tests, and real browser
+checks in [the local panel guide](docs/web.md#verify). Keep optional Web packages
+out of the core's required dependencies.
 
 Add tests for observable behavior. Important cases include a lost response after
 commit, duplicate operations, stale revisions, changed feedback, and plan reruns.

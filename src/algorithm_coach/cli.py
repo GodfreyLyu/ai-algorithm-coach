@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tomllib
+from urllib.parse import urlencode
 
 from .errors import CoachError
 from .service import Coach
@@ -129,6 +130,14 @@ def _parser() -> argparse.ArgumentParser:
     for command in ("plan", "show"):
         sub = commands.add_parser(command)
         sub.add_argument("--date")
+    session = commands.add_parser("start-session", help="Prepare a training plan and its local feedback page.")
+    session.add_argument("--date")
+    session.add_argument("--web-python")
+    session.add_argument("--web-port", type=int)
+    session.add_argument("--web-static-dir", type=Path)
+    session.add_argument("--no-web", action="store_true")
+    web = commands.add_parser("web", help="Inspect or stop this workspace's managed Web instance.")
+    web.add_argument("web_command", choices=("status", "stop"))
     feedback = commands.add_parser("feedback", help="Save progress or a correction.")
     feedback.add_argument("--attempt", required=True)
     feedback.add_argument("--submission", required=True)
@@ -152,9 +161,12 @@ def _parser() -> argparse.ArgumentParser:
     practice.add_argument("--date")
     catalog = commands.add_parser("catalog")
     catalog_operations = catalog.add_subparsers(dest="catalog_command")
+    catalog_preview = catalog_operations.add_parser("preview", help="Preview metadata without saving it.")
+    catalog_preview.add_argument("--file", required=True)
     catalog_import = catalog_operations.add_parser("import", help="Append validated problem metadata.")
     catalog_import.add_argument("--file", required=True)
     catalog_import.add_argument("--submission", required=True)
+    catalog_import.add_argument("--expected-hash", help="Require the normalized payload hash from a preview.")
     _policy_commands(commands)
     commands.add_parser("migrate", help="Explicitly migrate an older local database.")
     backup = commands.add_parser("backup")
@@ -200,6 +212,26 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
                                  "language": args.language})
     if args.command == "plan":
         return coach.ensure_plan(args.date)
+    if args.command == "start-session":
+        plan = coach.ensure_plan(args.date)
+        coach.close()
+        if args.no_web:
+            web = {"status": "disabled", "action": "none", "reason": "disabled", "url": None}
+        else:
+            from .web_runtime import ensure_web
+
+            web = ensure_web(Path(args.data_dir).expanduser(), python=args.web_python,
+                             static_dir=args.web_static_dir, preferred_port=args.web_port)
+        if web.get("status") == "ready":
+            query = urlencode({"date": plan["training_date"], "store": web["store_id"]})
+            web = {**web, "url": web["url"].rstrip("/") + "/?" + query}
+        return {"plan": plan, "web": web}
+    if args.command == "web":
+        from .web_runtime import stop_web, web_status
+
+        coach.close()
+        operation = web_status if args.web_command == "status" else stop_web
+        return operation(Path(args.data_dir).expanduser())
     if args.command == "show":
         return coach.get_plan(args.date)
     if args.command == "feedback":
@@ -228,11 +260,13 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
             review_id=args.review, training_date=args.date,
         )
     if args.command == "catalog":
-        if args.catalog_command == "import":
+        if args.catalog_command in ("preview", "import"):
             document = _document(args.file)
             if set(document) != {"problems"} or not isinstance(document["problems"], list):
                 raise CoachError("validation_error", "Catalog documents need only a problems array.")
-            return coach.import_catalog(document["problems"], args.submission)
+            if args.catalog_command == "preview":
+                return coach.preview_catalog(document["problems"])
+            return coach.import_catalog(document["problems"], args.submission, expected_hash=args.expected_hash)
         return coach.list_problems()
     if args.command == "capabilities":
         return coach.policy_capabilities()

@@ -13,6 +13,7 @@ from .errors import CoachError
 from .policies import eligibility, validate_plan_candidates
 from .policy_store import PolicyMixin
 from .rules import default_config, derive_learning_state, merge_feedback, validate_config
+from .scoring import derive_topic_scores
 from . import storage
 
 
@@ -175,6 +176,19 @@ class Coach(PolicyMixin):
         if normalized != config:
             raise CoachError("integrity_error", "Stored configuration is incomplete or not normalized.")
         return {"revision": row["revision"], "config": config}
+
+    def get_workspace_identity(self) -> dict:
+        """Read the durable identity without creating or changing learning records.
+
+        Inputs: None. Use this Coach's initialized database.
+        Outputs: The saved workspace_id.
+        Logic: Read metadata and reject a missing or malformed identity.
+        Dependencies: The existing metadata table and CoachError.
+        """
+        row = self._db().execute("SELECT value FROM metadata WHERE key = 'workspace_id'").fetchone()
+        if row is None or not isinstance(row[0], str) or not row[0].strip():
+            raise CoachError("integrity_error", "Workspace identity is missing.")
+        return {"workspace_id": row[0]}
 
     def update_config(self, changes: dict, expected_revision: int) -> dict:
         """Inputs: configuration changes and the expected revision. Outputs: new config.
@@ -689,3 +703,32 @@ class Coach(PolicyMixin):
         if temporary_source:
             source.close()
         return {"status": "verified", "schema_version": version, "state_version": state_version}
+
+    def get_topic_scores(self, language: str | None = None) -> dict:
+        """Read topic rates from one consistent authority snapshot.
+
+        Inputs: An optional language; None uses the saved default language.
+        Outputs: Self-reported topic metrics and the matching state version.
+        Logic: Read existing evidence and mastery without rebuilding or saving scores.
+        Dependencies: A deferred read transaction, stored catalog, and derive_topic_scores.
+        """
+        connection = self._db()
+        owns_snapshot = not connection.in_transaction
+        if owns_snapshot:
+            connection.execute("BEGIN")
+        try:
+            config = self.get_config()["config"]
+            selected_language = config["language"] if language is None else validate_config({**config, "language": language})["language"]
+            state = self._state()
+            scores = derive_topic_scores(
+                self._attempts(), self.list_problems()["problems"],
+                selected_language, state["problems"],
+            )
+            result = {**scores, "state_version": state["state_version"]}
+            if owns_snapshot:
+                connection.commit()
+            return result
+        except BaseException:
+            if owns_snapshot:
+                connection.rollback()
+            raise
