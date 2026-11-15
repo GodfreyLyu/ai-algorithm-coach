@@ -231,7 +231,7 @@ These tests do not establish compatibility with every AI client or deployment ho
 
 Every PR to `main` runs named syntax, logic, and documentation checks.
 See [GitHub Actions and owner review](docs/github-actions.md) for job names,
-local commands, repository rules, and the owner-authored PR limit.
+local commands, repository rules, and the owner-authored PR exception.
 
 ## Architecture and next steps
 

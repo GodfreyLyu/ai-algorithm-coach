@@ -59,7 +59,7 @@ Two branch rulesets target only `refs/heads/main`:
 
 | Ruleset | Enforced behavior |
 | --- | --- |
-| `Main quality and owner approval` | Require a PR, one approval, code owner approval, resolved review threads, all four checks, and an up-to-date branch. Block deletion and force pushes. |
+| `Main quality and owner approval` | Require a PR, owner approval for other authors, resolved review threads, all four checks, and an up-to-date branch. Block deletion and force pushes. |
 | `Main owner merge only` | Restrict branch updates. Only the owner may bypass this update restriction, through a PR. |
 
 The quality ruleset has no bypass actors. Its checks also apply to the owner.
@@ -69,7 +69,9 @@ Its bypass applies only to the update restriction. It cannot bypass quality chec
 Direct pushes to `main` are blocked, including owner pushes.
 New reviewable commits dismiss old approvals.
 
-Only the owner's approval satisfies the code owner requirement.
+PRs opened by `@GodfreyLyu` need no approval.
+PRs opened by other authors require the owner's code owner approval.
+Only the owner's approval satisfies that requirement.
 GitHub may still let other users submit reviews. Those reviews do not replace it.
 To limit approval buttons in this public repository, enable Settings > Moderation
 options > Code review limits > Limit to users explicitly granted read or higher access.
@@ -77,10 +79,13 @@ Keep the owner as the only account with explicit repository access for that limi
 Adding collaborators can allow them to submit reviews. They still cannot satisfy
 the owner approval requirement or update `main` under these rulesets.
 
-GitHub does not let PR authors approve their own PRs.
-Under this strict policy, an owner-authored PR cannot meet the approval requirement.
-It stays blocked. There is no automatic owner exemption or approval bot.
-Changing that policy requires a separate owner decision.
+The generic `required_approving_review_count` is `0`.
+Keep `require_code_owner_review = true` and the catch-all owner in CODEOWNERS.
+This lets the sole code owner open a PR without an additional approving reviewer.
+Other authors still need approval from that code owner.
+GitHub still does not let authors approve their own PRs. No self-approval is needed.
+The exception depends on the PR author, not the commit author or workflow actor.
+It does not grant a quality ruleset bypass. Every PR must pass all four CI checks.
 
 ## Apply and inspect repository rules
 

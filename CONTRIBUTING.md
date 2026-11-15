@@ -69,7 +69,8 @@ State any new runtime requirement or compatibility limit.
 Keep unrelated changes separate. Do not publish user data as a demonstration.
 
 Every PR to `main` must pass all four named CI checks.
-Only `@GodfreyLyu` can provide the required owner approval and merge the PR.
-New reviewable commits require a fresh approval. Resolve review threads before merge.
-Owner-authored PRs stay blocked because GitHub does not allow self-approval.
+PRs opened by other authors require approval from `@GodfreyLyu`.
+PRs opened by `@GodfreyLyu` need no approval. All CI checks still apply.
+Only `@GodfreyLyu` can merge a PR.
+New reviewable commits dismiss old approvals. Resolve review threads before merge.
 See [GitHub Actions and repository rules](docs/github-actions.md) for setup and limits.
