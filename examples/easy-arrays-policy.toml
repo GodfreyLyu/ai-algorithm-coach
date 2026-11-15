@@ -1,0 +1,10 @@
+# File purpose: Show a small synthetic training-scope proposal with no activation.
+name = "Easy array focus"
+topics_any = ["array"]
+difficulties = ["easy"]
+preferred_topics = ["hash-table"]
+max_daily_count = 4
+# The proposal defaults to the next local training date.
+# Set effective_from and effective_until explicitly for a bounded training window.
+# Omitted scope fields inherit the policy resolved on that start date.
+# Omitted effective_until means no end date.

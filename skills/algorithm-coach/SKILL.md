@@ -38,6 +38,12 @@ Use the configured timezone. Use `--date YYYY-MM-DD` only for a requested date.
 Present official links and brief reasons. Use the returned attempt IDs internally.
 Do not ask the user to copy IDs or plan JSON during normal conversation.
 
+Use `capabilities` to check this tool's actual supported features.
+The core resolves the active dated policy before allocating work.
+Show paused backlog, paused reviews, blocked planning, and shortfall reasons.
+Never fill a shortfall with out-of-scope problems.
+Published plans stay frozen. Explain their current policy conflicts when reported.
+
 The core sets capacity and candidate order. Unfinished work occupies daily slots.
 Do not add new problems to satisfy a four-plus-extra preference after the cap is full.
 Do not mark unselected backlog complete or skipped.
@@ -104,16 +110,33 @@ user. Do not silently overwrite another result.
 Use `state` to read weak areas and due reviews after recording feedback.
 Use `practice --problem ID --submission ACTION_ID` for an explicit new redo.
 Add `--review ID` when starting a specific recorded review.
+Manual practice must pass the same active scope checks.
+Paused work keeps its original feedback; it is not E, F, or complete.
+Feedback for an older attempt can still be recorded outside today's scope.
 
 A, B, C, complexity, proficiency, and boundary-test entries are self-reports.
 Do not label them verified. One A is not stable mastery.
 Explain mastery as the outcome of the recorded spacing rules and evidence.
+
+## Scope policies and metadata
+
+Read [policy operations](references/policies.md) when the user changes training
+topics, difficulties, allowed or excluded problems, preferred topics, scope dates,
+daily allocation limits, or catalog metadata. Also read it for legacy migration.
+
+Use proposal, read-only preview, and exact-hash activation as separate operations.
+Use global `latest_revision` for concurrency, not the date-effective revision.
+Show the concrete proposal and preview, then obtain explicit approval before
+activation. A model-written confirmation flag is not proof of user approval.
+Do not infer that an expired policy still restricts training. Show its fallback.
+Never edit stored policy revisions or bypass scope through manual practice.
 
 ## Maintenance commands
 
 Use `config` to read saved settings. Changes need `--changes JSON` and
 `--expected-revision N`. Do not reconfigure the user each day.
 Use `catalog` for problem metadata and official links.
+Use `migrate` only as the explicit schema version 1 upgrade with a backup.
 Use `backup --output NEW_PATH` for a consistent backup.
 Use `check` for integrity and `rebuild-state` to rebuild derived state when requested.
 Backups and records are private. Do not export them for a public example.

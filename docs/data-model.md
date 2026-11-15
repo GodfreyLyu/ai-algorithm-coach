@@ -13,8 +13,8 @@ Updates use a partial changes object and the expected revision.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `language` | `Java` | Language for new attempts. |
-| `daily_count` | `5` | Total daily capacity, including unfinished work. |
-| `baseline_count` | `4` | Preferred basic slots within that capacity. |
+| `daily_count` | `5` | Generated plan capacity, including unfinished work. |
+| `baseline_count` | `4` | Existing selection preference; not a phase quota. |
 | `timezone` | `UTC` | IANA timezone for training dates. |
 | `run_time` | `null` | Optional preferred local time; not an active timer. |
 | `review_intervals` | `[3, 7]` | Required spacing between qualifying independent attempts. |
@@ -22,8 +22,10 @@ Updates use a partial changes object and the expected revision.
 | `stable_review_days` | `30` | Maintenance review delay after stable evidence. |
 | `skip_cooldown_days` | `7` | Default eligibility delay after a skipped attempt. |
 
-For a smaller daily capacity, the core caps basic slots at the available capacity.
 Changing saved configuration does not rewrite a published plan.
+No phase quota system is implemented. A policy `max_daily_count` is the optional
+shared hard cap for manual and planned allocations. Without it, manual practice
+is not implicitly capped by `daily_count`.
 
 ## Logical records
 
@@ -38,6 +40,9 @@ Changing saved configuration does not rewrite a published plan.
 | Learning state | Rebuildable problem and topic evidence derived from attempts. |
 | Review | A due practice need linked to its evidence and execution attempt. |
 | Submission receipt | A permanent operation ID, content identity, and committed result. |
+| Policy proposal | An immutable normalized policy body, content hash, and base versions. |
+| Activated policy | An immutable policy revision with inclusive effective dates. |
+| Policy approval | An acceptance record bound to the exact activated content hash. |
 
 ## Relationships
 
@@ -61,6 +66,24 @@ A submission stores a normalized content identity.
 The same ID with the same content returns its stored result.
 The same ID with different content is rejected.
 The receipt remains meaningful after the request process exits.
+
+Global policy `latest_revision` is the highest activated policy revision.
+It is the compare-and-swap version for proposal and activation.
+The policy `revision` effective on a queried date can be older or baseline 0.
+A future activated policy still advances the global version.
+Configuration, catalog, and learning-state versions are separate context.
+
+Plans retain their policy snapshot. Current policy comparisons are diagnostics,
+not changes to the stored assignment. Paused attempts and reviews retain identity
+and feedback. They can become eligible again without reconstructing lost history.
+
+## Schema migration
+
+Schema version 2 stores policy history and imported metadata context.
+Opening a version 1 store does not silently migrate it.
+The explicit migration creates a consistent backup first, then changes schema and
+version in one transaction. Failure rolls back the schema changes.
+Practice IDs, plan history, feedback revisions, and receipts are preserved.
 
 ## Original and derived records
 

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import tomllib
 
 from .errors import CoachError
 from .service import Coach
@@ -22,6 +23,22 @@ def _reject_constant(value: str) -> None:
     raise CoachError("validation_error", f"Invalid JSON number: {value}.")
 
 
+def _unique_fields(pairs: list[tuple[str, object]]) -> dict:
+    """Reject duplicate JSON keys before request normalization.
+
+    Inputs: Object fields in their original order.
+    Outputs: One dictionary with unique field names.
+    Logic: Refuse ambiguous objects instead of silently choosing the last value.
+    Dependencies: CoachError.
+    """
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise CoachError("validation_error", f"Duplicate JSON field: {key}.")
+        result[key] = value
+    return result
+
+
 def _changes(value: str) -> dict:
     """Read a JSON object passed by a tool or a person.
 
@@ -31,12 +48,67 @@ def _changes(value: str) -> dict:
     Dependencies: json and CoachError.
     """
     try:
-        parsed = json.loads(value, parse_constant=_reject_constant)
+        parsed = json.loads(value, parse_constant=_reject_constant, object_pairs_hook=_unique_fields)
     except (ValueError, TypeError) as exc:
         raise CoachError("validation_error", "Changes must be valid JSON.") from exc
     if not isinstance(parsed, dict):
         raise CoachError("validation_error", "Changes must be a JSON object.")
     return parsed
+
+
+def _document(path: str) -> dict:
+    """Read a local policy or metadata document.
+
+    Inputs: A JSON or TOML file path supplied by the caller.
+    Outputs: A parsed object.
+    Logic: Bound input size, parse the declared format, and reject invalid roots.
+    Dependencies: pathlib, tomllib, the strict JSON reader, and CoachError.
+    """
+    source = Path(path).expanduser()
+    if source.stat().st_size > 1_048_576:
+        raise CoachError("validation_error", "Input documents must be at most one MiB.")
+    try:
+        text = source.read_text(encoding="utf-8")
+        if source.suffix.lower() == ".toml":
+            document = tomllib.loads(text)
+            if not isinstance(document, dict):
+                raise CoachError("validation_error", "The document must be an object.")
+            return document
+        if source.suffix.lower() == ".json":
+            return _changes(text)
+    except (UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise CoachError("validation_error", "The input document is not valid UTF-8 TOML or JSON.") from exc
+    raise CoachError("validation_error", "Use a .toml or .json input document.")
+
+
+def _policy_commands(commands: argparse._SubParsersAction) -> None:
+    """Describe policy discovery, proposal, preview, and activation commands.
+
+    Inputs: The top-level subcommand collection.
+    Outputs: None. Add parsers to the collection.
+    Logic: Separate proposed content from activation of an exact content hash.
+    Dependencies: argparse.
+    """
+    commands.add_parser("capabilities", help="Read supported policy fields and catalog tags.")
+    policy = commands.add_parser("policy", help="Inspect or change versioned training scope.")
+    operations = policy.add_subparsers(dest="policy_command", required=True)
+    get = operations.add_parser("get")
+    get.add_argument("--date")
+    operations.add_parser("history")
+    propose = operations.add_parser("propose")
+    inputs = propose.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--changes")
+    inputs.add_argument("--file")
+    propose.add_argument("--expected-revision", required=True, type=int)
+    propose.add_argument("--submission", required=True)
+    preview = operations.add_parser("preview")
+    preview.add_argument("--proposal", required=True)
+    preview.add_argument("--date")
+    activate = operations.add_parser("activate")
+    activate.add_argument("--proposal", required=True)
+    activate.add_argument("--expected-revision", required=True, type=int)
+    activate.add_argument("--accept-hash", required=True)
+    activate.add_argument("--submission", required=True)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -78,12 +150,41 @@ def _parser() -> argparse.ArgumentParser:
     practice.add_argument("--language")
     practice.add_argument("--review")
     practice.add_argument("--date")
-    commands.add_parser("catalog")
+    catalog = commands.add_parser("catalog")
+    catalog_operations = catalog.add_subparsers(dest="catalog_command")
+    catalog_import = catalog_operations.add_parser("import", help="Append validated problem metadata.")
+    catalog_import.add_argument("--file", required=True)
+    catalog_import.add_argument("--submission", required=True)
+    _policy_commands(commands)
+    commands.add_parser("migrate", help="Explicitly migrate an older local database.")
     backup = commands.add_parser("backup")
     backup.add_argument("--output", required=True)
     commands.add_parser("check")
     commands.add_parser("rebuild-state")
     return parser
+
+
+def _execute_policy(coach: Coach, args: argparse.Namespace) -> dict:
+    """Route policy commands through the shared application service.
+
+    Inputs: A Coach instance and parsed policy arguments.
+    Outputs: A JSON-compatible policy result or committed receipt.
+    Logic: Read input documents for proposals and pass exact activation identities.
+    Dependencies: Coach and the JSON or TOML input readers.
+    """
+    if args.policy_command == "get":
+        return coach.get_policy(args.date)
+    if args.policy_command == "history":
+        return coach.policy_history()
+    if args.policy_command == "propose":
+        changes = _document(args.file) if args.file else _changes(args.changes)
+        return coach.propose_policy(changes, args.expected_revision, args.submission)
+    if args.policy_command == "preview":
+        return coach.preview_policy(args.proposal, args.date)
+    if args.policy_command == "activate":
+        return coach.activate_policy(args.proposal, args.expected_revision,
+                                     args.accept_hash, args.submission)
+    raise CoachError("validation_error", "Unknown policy command.")
 
 
 def _execute(coach: Coach, args: argparse.Namespace) -> dict:
@@ -127,7 +228,18 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
             review_id=args.review, training_date=args.date,
         )
     if args.command == "catalog":
+        if args.catalog_command == "import":
+            document = _document(args.file)
+            if set(document) != {"problems"} or not isinstance(document["problems"], list):
+                raise CoachError("validation_error", "Catalog documents need only a problems array.")
+            return coach.import_catalog(document["problems"], args.submission)
         return coach.list_problems()
+    if args.command == "capabilities":
+        return coach.policy_capabilities()
+    if args.command == "policy":
+        return _execute_policy(coach, args)
+    if args.command == "migrate":
+        return coach.migrate()
     if args.command == "backup":
         return coach.backup(Path(args.output).expanduser())
     if args.command == "check":

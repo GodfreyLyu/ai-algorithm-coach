@@ -43,6 +43,18 @@ Keep raw feedback history. Make schema and state-version changes explicit.
 Verify that state can be rebuilt and that backup recovery still works.
 Never treat model agreement as proof of correctness.
 
+Scope policies are constraints, not new mastery rules.
+Test the policy on planning, continuation, review, and manual allocation paths.
+Test a global-version conflict even when the date-effective policy is unchanged.
+Check read-only previews, immutable proposal hashes, explicit approval, expiry
+fallback, paused work, zero eligible candidates, and partial plans.
+An expired policy must not silently retain its old restrictions.
+
+For schema changes, test a version 1 fixture with real-shaped synthetic history.
+Verify its backup, successful migration, rollback on injected failure, and receipt
+preservation. Never migrate a user's private database as a contribution fixture.
+Metadata imports must be append-only. Test duplicate imports and conflicting IDs.
+
 Catalog contributions may include IDs, tags, metadata, and official links.
 Do not include full problem statements or paid content.
 Do not contribute real practice records, chat logs, task IDs, personal paths,
