@@ -62,6 +62,24 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(history["attempt"]["feedback"]["result"], "B")
             following = self._run(entry, data, ["plan", "--date", "2026-01-02"])["data"]
             self.assertTrue(any(row["reason"] == "retest" for row in following["items"]))
+            self.assertTrue((bundle / "references" / "policies.md").is_file())
+            policy_file = base / "scope.toml"
+            policy_file.write_text(
+                '# Describe a synthetic temporary scope.\nname = "Trees"\n'
+                'topics_any = ["tree"]\ndifficulties = ["easy"]\n'
+                'max_daily_count = 2\neffective_from = "2026-01-03"\n', encoding="utf-8")
+            proposed = self._run(entry, data, ["policy", "propose", "--file", str(policy_file),
+                                               "--expected-revision", "0", "--submission", "bundle-proposal"])["data"]
+            preview = self._run(entry, data, ["policy", "preview", "--proposal", proposed["proposal_id"]])["data"]
+            self.assertFalse(preview["stale"])
+            self.assertGreater(preview["eligible_count"], 0)
+            applied = self._run(entry, data, ["policy", "activate", "--proposal", proposed["proposal_id"],
+                                             "--expected-revision", "0", "--accept-hash", proposed["content_hash"],
+                                             "--submission", "bundle-activation"])["data"]
+            self.assertEqual(applied["status"], "applied")
+            scoped = self._run(entry, data, ["plan", "--date", "2026-01-03"])["data"]
+            self.assertLessEqual(len(scoped["items"]), 2)
+            self.assertTrue(all("tree" in row["problem"]["tags"] for row in scoped["items"]))
 
     def test_cli_returns_validation_error_for_non_object_changes(self) -> None:
         """Return structured errors instead of accepting malformed changes.
@@ -107,6 +125,47 @@ class CommandTests(unittest.TestCase):
                                      capture_output=True, text=True, timeout=30)
             self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
             self.assertTrue(json.loads(process.stdout)["ok"])
+
+    def test_cli_imports_toml_metadata_and_reports_capabilities(self) -> None:
+        """Read a metadata-only TOML document through the public command line.
+
+        Inputs: A temporary import document and an initialized local workspace.
+        Outputs: An applied import and newly selectable metadata.
+        Logic: Parse the same envelope that the documented example uses.
+        Dependencies: The Skill runner, TOML parsing, and catalog validation.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            data = base / "private"
+            self._run(ENTRY, data, ["init"])
+            document = base / "metadata.toml"
+            document.write_text(
+                '# Describe a synthetic test import.\n[[problems]]\nid = "leetcode:27"\n'
+                'title = "Remove Element"\ndifficulty = "easy"\n'
+                'tags = ["array", "two-pointers"]\n'
+                'url = "https://leetcode.com/problems/remove-element/"\n', encoding="utf-8")
+            result = self._run(ENTRY, data, ["catalog", "import", "--file", str(document),
+                                             "--submission", "cli-import"])["data"]
+            self.assertEqual(result["added_count"], 1)
+            catalog = self._run(ENTRY, data, ["catalog"])["data"]
+            self.assertIn("leetcode:27", [row["id"] for row in catalog["problems"]])
+            self.assertTrue(self._run(ENTRY, data, ["capabilities"])["ok"])
+
+    def test_duplicate_json_fields_are_not_silently_overwritten(self) -> None:
+        """Reject ambiguous input before any learning record is changed.
+
+        Inputs: A changes object that reports two mutually exclusive results.
+        Outputs: A structured validation error.
+        Logic: Preserve the exact meaning of a submitted operation.
+        Dependencies: The strict CLI JSON reader.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp) / "private"
+            self._run(ENTRY, data, ["init"])
+            result = self._run(ENTRY, data, ["feedback", "--attempt", "synthetic", "--submission", "ambiguous",
+                                            "--expected-revision", "0", "--changes", '{"result":"A","result":"C"}'],
+                               expected_code=1)
+            self.assertEqual(result["error"]["code"], "validation_error")
 
 
 if __name__ == "__main__":

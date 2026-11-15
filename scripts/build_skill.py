@@ -29,6 +29,7 @@ def build(output: Path) -> dict:
         shutil.copytree(root / "src" / "algorithm_coach", output / "lib" / "algorithm_coach",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         shutil.copy2(root / "LICENSE", output / "LICENSE")
+        shutil.copy2(root / "THIRD_PARTY_NOTICES.md", output / "THIRD_PARTY_NOTICES.md")
     except BaseException:
         shutil.rmtree(output)
         raise

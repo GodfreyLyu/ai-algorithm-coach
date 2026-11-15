@@ -11,8 +11,8 @@ from .errors import CoachError
 
 
 APPLICATION_ID = 0x41414331
-SCHEMA_VERSION = 1
-SCHEMA = """
+SCHEMA_VERSION = 2
+SCHEMA_V1 = """
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE config (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -70,6 +70,30 @@ BEGIN SELECT RAISE(ABORT, 'Submission receipts are immutable'); END;
 CREATE TRIGGER submissions_no_delete BEFORE DELETE ON submissions
 BEGIN SELECT RAISE(ABORT, 'Submission receipts are immutable'); END;
 """
+POLICY_SCHEMA = """
+CREATE TABLE policy_proposals (
+    id TEXT PRIMARY KEY, body TEXT NOT NULL, content_hash TEXT NOT NULL,
+    base_revision INTEGER NOT NULL, config_revision INTEGER NOT NULL,
+    catalog_version TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE policies (
+    revision INTEGER PRIMARY KEY,
+    proposal_id TEXT UNIQUE REFERENCES policy_proposals(id),
+    body TEXT NOT NULL, content_hash TEXT NOT NULL, activated_at TEXT NOT NULL
+);
+ALTER TABLE plans ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE plans ADD COLUMN policy_snapshot TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE plans ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}';
+CREATE TRIGGER proposals_no_update BEFORE UPDATE ON policy_proposals
+BEGIN SELECT RAISE(ABORT, 'Policy proposals are immutable'); END;
+CREATE TRIGGER proposals_no_delete BEFORE DELETE ON policy_proposals
+BEGIN SELECT RAISE(ABORT, 'Policy proposals are immutable'); END;
+CREATE TRIGGER policies_no_update BEFORE UPDATE ON policies
+BEGIN SELECT RAISE(ABORT, 'Policy activations are immutable'); END;
+CREATE TRIGGER policies_no_delete BEFORE DELETE ON policies
+BEGIN SELECT RAISE(ABORT, 'Policy activations are immutable'); END;
+"""
+SCHEMA = SCHEMA_V1 + POLICY_SCHEMA
 
 
 def canonical_json(value: object) -> str:
@@ -100,7 +124,7 @@ def decode_object(value: str, label: str) -> dict:
     return result
 
 
-def connect(path: Path) -> sqlite3.Connection:
+def connect(path: Path, allow_legacy: bool = False) -> sqlite3.Connection:
     """Inputs: an existing database path. Outputs: a configured connection.
 
     Logic: open without implicit transactions and enable integrity settings.
@@ -116,7 +140,7 @@ def connect(path: Path) -> sqlite3.Connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
         connection.execute("PRAGMA synchronous = FULL")
-        check_schema(connection)
+        check_schema(connection, allow_legacy)
         return connection
     except (sqlite3.Error, CoachError) as exc:
         if "connection" in locals():
@@ -126,7 +150,7 @@ def connect(path: Path) -> sqlite3.Connection:
         raise CoachError("storage_error", "The database could not be opened safely.") from exc
 
 
-def check_schema(connection: sqlite3.Connection) -> None:
+def check_schema(connection: sqlite3.Connection, allow_legacy: bool = False) -> None:
     """Inputs: an open connection. Outputs: none, or a domain error.
 
     Logic: reject unknown applications and unsupported schema versions.
@@ -134,15 +158,36 @@ def check_schema(connection: sqlite3.Connection) -> None:
     """
     application = connection.execute("PRAGMA application_id").fetchone()[0]
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if application != APPLICATION_ID or version != SCHEMA_VERSION:
+    if application == APPLICATION_ID and version == 1 and not allow_legacy:
+        raise CoachError("migration_required", "Back up and run the explicit migrate command for schema version 2.")
+    if application != APPLICATION_ID or version not in ((1, SCHEMA_VERSION) if allow_legacy else (SCHEMA_VERSION,)):
         raise CoachError("unsupported_database", "This file is not a supported coach database.")
     try:
         config = connection.execute("SELECT revision FROM config WHERE singleton = 1").fetchone()
         state = connection.execute("SELECT version FROM learning_state WHERE singleton = 1").fetchone()
         if config is None or state is None:
             raise CoachError("unsupported_database", "The coach initialization is incomplete.")
+        if version == SCHEMA_VERSION:
+            connection.execute("SELECT revision FROM policies WHERE revision = 0").fetchone()
+            connection.execute("SELECT id FROM policy_proposals LIMIT 1").fetchone()
     except sqlite3.Error as exc:
         raise CoachError("unsupported_database", "The coach schema is incomplete.") from exc
+
+
+def apply_schema(connection: sqlite3.Connection, script: str) -> None:
+    """Inputs: a connection and SQL script. Outputs: none.
+
+    Logic: execute complete statements without committing the caller's transaction.
+    Dependencies: sqlite3.complete_statement; trigger bodies remain intact.
+    """
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            connection.execute(statement)
+            statement = ""
+    if statement.strip():
+        raise CoachError("storage_error", "The schema script contains an incomplete statement.")
 
 
 def create(path: Path) -> sqlite3.Connection:
@@ -178,12 +223,7 @@ def create(path: Path) -> sqlite3.Connection:
         existing = connection.execute("SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").fetchall()
         if application != 0 or version != 0 or existing:
             raise CoachError("unsupported_database", "Initialization will not modify a foreign or incomplete schema.")
-        statement = ""
-        for line in SCHEMA.splitlines(keepends=True):
-            statement += line
-            if sqlite3.complete_statement(statement):
-                connection.execute(statement)
-                statement = ""
+        apply_schema(connection, SCHEMA)
         connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         return connection

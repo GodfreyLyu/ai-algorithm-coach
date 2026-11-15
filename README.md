@@ -19,12 +19,17 @@ and FastAPI. That UI is not part of this version.
 - Derive weak areas and due reviews from recorded evidence.
 - Back up the database and check its integrity.
 - Package the core with the Skill for use outside this repository.
+- Restrict training with dated, versioned scope policies.
+- Preview a policy before a host-approved activation.
+- Import additional problem metadata without replacing existing entries.
+- Migrate a version 1 workspace explicitly, with a backup.
 
-The default language is Java. The default daily total is five problems.
-Four basic slots and one extra slot are a preference, not an extra workload.
-Unfinished work uses the same daily capacity. A large backlog can use every slot.
+The default language is Java. The default daily plan target is five problems.
+Unfinished work uses the same plan capacity. A large backlog can use every slot.
+There is no implemented phase system or guaranteed four-plus-extra quota.
 Language, daily total, timezone, preferred run time, and review rules are configurable.
 Saving a preferred run time does not create a scheduled task.
+Scope policies constrain eligibility. They do not replace the learning rules.
 
 ## Requirements
 
@@ -69,6 +74,67 @@ python3.12 skills/algorithm-coach/scripts/coach.py plan
 Calling `plan` twice returns the same published plan. It does not replace feedback.
 The next training date can continue the same unfinished attempt.
 Use `--date YYYY-MM-DD` to request a specific training date.
+
+## Set a training scope
+
+Policies can restrict topics, difficulties, or specific problem IDs.
+They can exclude IDs, prefer topics, and set a shared daily allocation limit.
+The unrestricted baseline is revision 0.
+
+Read the current policy and its global `latest_revision` first:
+
+```sh
+python3.12 skills/algorithm-coach/scripts/coach.py capabilities
+python3.12 skills/algorithm-coach/scripts/coach.py policy get
+python3.12 skills/algorithm-coach/scripts/coach.py policy propose \
+  --file examples/easy-arrays-policy.toml \
+  --expected-revision 0 --submission example-policy-proposal
+python3.12 skills/algorithm-coach/scripts/coach.py policy preview --proposal PROPOSAL_ID
+```
+
+The example uses `0` only for a workspace with no activated policy.
+Use the actual `latest_revision` for every proposal and activation.
+The date-effective `revision` can differ from this global concurrency version.
+
+Inspect the exact proposed body, dates, hash, paused work, and fallback behavior.
+Activation requires an explicit decision through the trusted host or direct CLI.
+After approving that exact proposal, use its hash and the current global version:
+
+```sh
+python3.12 skills/algorithm-coach/scripts/coach.py policy activate \
+  --proposal PROPOSAL_ID --accept-hash EXACT_PROPOSAL_HASH \
+  --expected-revision 0 --submission example-policy-activation
+```
+
+Proposing or previewing does not activate a policy or publish a plan.
+Omitting `effective_from` uses the next local training date.
+Omitted scope fields inherit the policy resolved for that start date.
+Omitting `effective_until` removes the end date; it does not inherit one.
+An expired policy falls back to a prior applicable policy or the unrestricted
+baseline. Preview that transition before approval.
+
+Out-of-scope unfinished work and reviews stay visible as paused work.
+Their feedback is unchanged. Feedback for an older attempt can still be recorded.
+Published plans stay frozen and report any current policy conflict.
+An activation that would conflict with published plans in its effective dates
+is refused. Choose the next unpublished date or change the proposal.
+
+`daily_count` limits a generated plan. A policy `max_daily_count` is a hard shared
+limit for distinct daily allocations through planning and manual practice.
+Without that policy limit, manual practice has no implicit cap from `daily_count`.
+See [policy rules and approval](docs/policies.md) for fields and examples.
+
+## Add problem metadata
+
+```sh
+python3.12 skills/algorithm-coach/scripts/coach.py catalog import \
+  --file examples/catalog-extra.toml --submission example-catalog-import
+```
+
+Imports accept curated metadata only: ID, title, difficulty, tags, and an official
+LeetCode link. Existing IDs cannot be changed. Exact repeats are safe.
+URL validation does not prove that metadata is correct or that a solution is AC.
+No remote scraping, full statement, paid content, or practice record is imported.
 
 ## Correct feedback
 
@@ -120,6 +186,11 @@ Do not store private records inside the bundle.
 | `config` | Read settings or update them with an expected revision. |
 | `practice` | Start an explicit redo or review as a new attempt. |
 | `catalog` | Read problem metadata and official links. |
+| `catalog import` | Append validated metadata from TOML or JSON. |
+| `capabilities` | Read the supported local features and limits. |
+| `policy get/history` | Read the effective policy, global version, or revision history. |
+| `policy propose/preview/activate` | Prepare, inspect, and explicitly activate a scope policy. |
+| `migrate` | Upgrade a version 1 database with a pre-migration backup. |
 | `backup` | Write a consistent backup to a new destination. |
 | `check` | Check database integrity and references. |
 | `rebuild-state` | Rebuild derived learning state from stored records. |
@@ -150,12 +221,17 @@ No third-party test dependency is required.
 ```sh
 python3.12 -m unittest discover -s tests -v
 python3.12 scripts/check_comments.py
+python3.12 scripts/check_docs.py
 ```
 
 Tests use synthetic records in temporary directories.
 They cover the local feedback loop, repeat submissions, corrections, plan reruns,
 review rules, backup recovery, and the standalone Skill bundle.
 These tests do not establish compatibility with every AI client or deployment host.
+
+Every PR to `main` runs named syntax, logic, and documentation checks.
+See [GitHub Actions and owner review](docs/github-actions.md) for job names,
+local commands, repository rules, and the owner-authored PR exception.
 
 ## Architecture and next steps
 
@@ -165,7 +241,8 @@ The SQLite database is the only authority for this local workspace.
 Chat summaries and future browser caches are views or pending input.
 
 See the [architecture](docs/architecture.md), [data model](docs/data-model.md),
-[backup guide](docs/backup-restore.md), and [future UI contract](docs/future-ui.md).
+[policy guide](docs/policies.md), [backup guide](docs/backup-restore.md),
+and [future UI contract](docs/future-ui.md).
 
 The next product phase adds React TypeScript forms and a FastAPI adapter.
 It must preserve the same attempt IDs, feedback revisions, and receipts.

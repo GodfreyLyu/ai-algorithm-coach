@@ -26,6 +26,8 @@ Run from the repository root:
 
 ```sh
 python3.12 -m unittest discover -s tests -v
+python3.12 scripts/check_comments.py
+python3.12 scripts/check_docs.py
 ```
 
 Add tests for observable behavior. Important cases include a lost response after
@@ -43,6 +45,18 @@ Keep raw feedback history. Make schema and state-version changes explicit.
 Verify that state can be rebuilt and that backup recovery still works.
 Never treat model agreement as proof of correctness.
 
+Scope policies are constraints, not new mastery rules.
+Test the policy on planning, continuation, review, and manual allocation paths.
+Test a global-version conflict even when the date-effective policy is unchanged.
+Check read-only previews, immutable proposal hashes, explicit approval, expiry
+fallback, paused work, zero eligible candidates, and partial plans.
+An expired policy must not silently retain its old restrictions.
+
+For schema changes, test a version 1 fixture with real-shaped synthetic history.
+Verify its backup, successful migration, rollback on injected failure, and receipt
+preservation. Never migrate a user's private database as a contribution fixture.
+Metadata imports must be append-only. Test duplicate imports and conflicting IDs.
+
 Catalog contributions may include IDs, tags, metadata, and official links.
 Do not include full problem statements or paid content.
 Do not contribute real practice records, chat logs, task IDs, personal paths,
@@ -53,3 +67,10 @@ authentication cookies, or deployment credentials.
 Describe the user-visible result and the checks you ran.
 State any new runtime requirement or compatibility limit.
 Keep unrelated changes separate. Do not publish user data as a demonstration.
+
+Every PR to `main` must pass all four named CI checks.
+PRs opened by other authors require approval from `@GodfreyLyu`.
+PRs opened by `@GodfreyLyu` need no approval. All CI checks still apply.
+Only `@GodfreyLyu` can merge a PR.
+New reviewable commits dismiss old approvals. Resolve review threads before merge.
+See [GitHub Actions and repository rules](docs/github-actions.md) for setup and limits.

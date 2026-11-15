@@ -1,0 +1,8 @@
+# File purpose: Show append-only public problem metadata without a problem statement.
+# The URL is the official source. This example makes no correctness claim.
+[[problems]]
+id = "leetcode:27"
+title = "Remove Element"
+difficulty = "easy"
+tags = ["array", "two-pointers"]
+url = "https://leetcode.com/problems/remove-element/"

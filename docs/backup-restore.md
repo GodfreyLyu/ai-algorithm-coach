@@ -4,6 +4,8 @@
 
 Backups contain private feedback history. Store them outside the repository.
 Use a local disk and restrict access to the operating system owner.
+Schema version 2 backups also contain policy proposals, activated policy history,
+approval hashes, and imported catalog metadata.
 
 ## Back up
 
@@ -35,6 +37,25 @@ and rules. The selected problems and reasons should match.
 Do not compare newly generated opaque IDs between copies.
 Compare stable business evidence, selected problems, and due dates instead.
 Only switch the configured live path after those checks pass.
+
+## Migrate a version 1 workspace
+
+Use the explicit `migrate` command against the configured private data directory.
+Ordinary commands do not silently upgrade a legacy database.
+Migration creates a consistent version 1 backup before changing schema.
+This automatic backup is private and verified before the upgrade proceeds.
+Keep it outside the repository and note the returned `backup_path`.
+The explicit manual `backup` command remains available before or after migration.
+
+The migration adds schema version 2 records and the unrestricted policy baseline.
+It preserves existing attempts, plans, feedback revisions, and receipts.
+Schema changes and the schema-version update run in one transaction.
+If migration fails, those changes roll back. Do not delete and reinitialize the
+workspace as a recovery shortcut.
+
+After migration, run `check`, read an existing synthetic receipt, and read the
+history and effective policy. The legacy training data must still match.
+Repeat migration should report that no upgrade is needed, not recreate history.
 
 ## Failure cases
 

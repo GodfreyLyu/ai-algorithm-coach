@@ -1,0 +1,19 @@
+# File purpose: Allow only the repository owner to update main through a PR.
+name = "Main owner merge only"
+target = "branch"
+enforcement = "active"
+
+[[bypass_actors]]
+actor_id = 39753221
+actor_type = "User"
+bypass_mode = "pull_request"
+
+[conditions.ref_name]
+include = ["refs/heads/main"]
+exclude = []
+
+[[rules]]
+type = "update"
+
+[rules.parameters]
+update_allows_fetch_and_merge = false

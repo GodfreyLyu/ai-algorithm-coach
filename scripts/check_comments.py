@@ -19,7 +19,7 @@ def check(root: Path) -> list[str]:
                                      or part.endswith(".egg-info") for part in relative.parts):
             continue
         if path.suffix not in {".py", ".md", ".toml", ".yml", ".yaml"} and path.name not in {
-            ".gitignore", "LICENSE"
+            ".gitignore", "LICENSE", "CODEOWNERS"
         }:
             continue
         text = path.read_text(encoding="utf-8")

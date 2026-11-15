@@ -10,12 +10,17 @@ React with TypeScript will provide the feedback form.
 FastAPI will serve the API and built static UI from the same origin.
 The adapter will call the existing application service.
 It will not create another learning database or require a model to save feedback.
+The existing local policy lifecycle is not a deployed HTTP approval mechanism.
+Any UI for policy approval must establish a trusted user action on the exact
+proposal hash. A model-generated confirmation flag is insufficient.
 
 The stable entry page will open today's plan in the configured timezone.
 Problem links, attempt IDs, current feedback, and revision numbers will be prefilled.
 A–F and elapsed time will be the main controls.
 Extra fields will be optional. Earlier dates and correction history will be visible.
 Settings will be persistent. Users will not copy plans into the form each day.
+The form will show policy-paused work and frozen-plan conflicts without converting
+them to completion, deferral, or skip feedback.
 
 ## Save states
 

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .catalog import PROBLEMS
 from .errors import CoachError
+from .policies import default_policy, filter_catalog, policy_active, validate_plan_candidates, validate_policy
 
 RULE_VERSION = "1"
 FEEDBACK_FIELDS = (
@@ -237,17 +238,17 @@ def _attempt_order(attempt: dict) -> tuple:
     )
 
 
-def derive_learning_state(attempts: list[dict], config: dict) -> dict:
+def derive_learning_state(attempts: list[dict], config: dict, catalog: list[dict] | None = None) -> dict:
     """Rebuild learning evidence and review dates from effective feedback.
 
-    Inputs: Attempt snapshots and validated training settings.
+    Inputs: Attempt snapshots, settings, and optional stored catalog metadata.
     Outputs: Problem states, topic evidence, and the rule version.
     Logic: Count each attempt once. Require spaced independent reports for mastery.
     Dependencies: Catalog tags, date arithmetic, and configured review intervals.
     """
     settings = validate_config(config)
     groups = defaultdict(list)
-    catalog = {problem["id"]: problem for problem in PROBLEMS}
+    catalog_by_id = {problem["id"]: problem for problem in (PROBLEMS if catalog is None else catalog)}
     for attempt in attempts:
         groups[(attempt["problem_id"], attempt["language"])].append(attempt)
     problems = []
@@ -307,7 +308,7 @@ def derive_learning_state(attempts: list[dict], config: dict) -> dict:
             "last_practice_date": _attempt_order(latest)[0] if latest else None,
         }
         problems.append(state)
-        for tag in catalog.get(problem_id, {}).get("tags", []):
+        for tag in catalog_by_id.get(problem_id, {}).get("tags", []):
             topic = topics.setdefault((tag, language), {"tag": tag, "language": language, "weakness_score": 0, "evidence": []})
             topic["weakness_score"] += weakness
             if weakness:
@@ -320,21 +321,26 @@ def derive_learning_state(attempts: list[dict], config: dict) -> dict:
 
 def select_candidates(
     catalog: list[dict], attempts: list[dict], config: dict,
-    training_date: str, state: dict | None = None,
+    training_date: str, state: dict | None = None, policy: dict | None = None,
 ) -> list[dict]:
     """Fill a bounded plan with continuation, reviews, and useful new work.
 
-    Inputs: Catalog metadata, attempts, settings, date, and optional derived state.
+    Inputs: Catalog, attempts, settings, date, optional state, and resolved policy.
     Outputs: Ordered candidate dictionaries with existing or new attempt links.
-    Logic: Resume D or due E before untouched work, then review and new coverage.
-    Dependencies: derive_learning_state, calendar arithmetic, and catalog tags.
+    Logic: Gate every selection by hard scope. Rank eligible continuation first.
+    Dependencies: Derived state, policy checks, calendar arithmetic, and metadata.
     """
     settings = validate_config(config)
     today = _date(training_date, "training_date")
-    state = state if state is not None else derive_learning_state(attempts, settings)
+    active_policy = validate_policy(default_policy() if policy is None else policy, catalog)
+    if not policy_active(active_policy, training_date):
+        raise CoachError("inactive_policy", "The selected policy does not cover the training date.")
+    eligible_catalog = filter_catalog(catalog, active_policy)
+    state = state if state is not None else derive_learning_state(attempts, settings, catalog)
     language = settings["language"]
-    capacity = settings["daily_count"]
-    by_problem = {problem["id"]: problem for problem in catalog}
+    maximum = active_policy["max_daily_count"]
+    capacity = min(settings["daily_count"], maximum) if maximum is not None else settings["daily_count"]
+    by_problem = {problem["id"]: problem for problem in eligible_catalog}
     records = [attempt for attempt in attempts if attempt["language"] == language]
     grouped = defaultdict(list)
     for attempt in sorted(records, key=_attempt_order):
@@ -398,7 +404,7 @@ def select_candidates(
         selected_ids.add(problem_id)
     topic_scores = {item["tag"]: item["weakness_score"] for item in state["topics"] if item["language"] == language}
     candidates = []
-    for problem in catalog:
+    for problem in eligible_catalog:
         problem_id = problem["id"]
         if problem_id in selected_ids or problem_id in parked:
             continue
@@ -415,15 +421,22 @@ def select_candidates(
         base_slot = len(selected) < min(settings["baseline_count"], capacity)
         for problem in candidates:
             weak_score = sum(topic_scores.get(tag, 0) for tag in problem["tags"])
+            preferred_score = len(set(problem["tags"]).intersection(active_policy["preferred_topics"]))
             desired_difficulty = "easy" if base_slot else "medium"
             difficulty_cost = int(problem["difficulty"] != desired_difficulty)
             overlap = len(covered_tags.intersection(problem["tags"]))
-            scored.append((-weak_score, difficulty_cost, overlap, int(problem["id"].split(":")[-1]), problem["id"], problem))
+            scored.append((-weak_score, -preferred_score, difficulty_cost, overlap, int(problem["id"].split(":")[-1]), problem["id"], problem))
         best = min(scored)
         problem = best[-1]
-        reason = "weakness" if best[0] < 0 else ("foundation" if base_slot else "representative")
+        if best[0] < 0:
+            reason = "weakness"
+        elif best[1] < 0:
+            reason = "preferred_topic"
+        else:
+            reason = "foundation" if base_slot else "representative"
         selected.append({"problem_id": problem["id"], "attempt_id": None, "reason": reason, "review_source_attempt_id": None})
         selected_ids.add(problem["id"])
         covered_tags.update(problem["tags"])
         candidates.remove(problem)
+    validate_plan_candidates(selected, catalog, active_policy, settings)
     return selected

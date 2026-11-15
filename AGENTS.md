@@ -11,6 +11,19 @@
 - Keep the runtime free of third-party dependencies for the local Skill path.
 - Do not use chat summaries or browser caches as another learning authority.
 - Preserve feedback history, stable operation IDs, and optimistic revision checks.
+- Keep scope policies separate from learning rules. Enforce active scope in every
+  path that allocates practice, including manual practice and retests.
+- Keep policies, proposals, and approval records immutable. Tie approval to the
+  exact proposal content hash. A model-written confirmation flag is not consent.
+- Use global `latest_revision` for policy concurrency checks. Do not substitute
+  a policy revision that is only effective on a particular date.
+- Preview without publishing a plan or allocating attempts. Show paused work,
+  shortfalls, policy changes, and fallback after expiry.
+- Pause out-of-scope backlog and reviews without writing E, F, or completion.
+- Keep published plans frozen. Report policy conflicts instead of rewriting them.
+- Keep metadata import append-only and separate from private practice data.
+- Require an explicit version 1 migration with a consistent backup. Keep schema
+  changes in one transaction, so failed migrations leave the old data intact.
 - Treat AC results and complexity entries as self-reports unless separate evidence
   supports a clearly scoped verification claim.
 - Keep all tests and examples synthetic. Do not import private training records.

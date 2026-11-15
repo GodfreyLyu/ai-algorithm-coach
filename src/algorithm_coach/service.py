@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 
 from .catalog import CATALOG_VERSION, PROBLEMS
 from .errors import CoachError
-from .rules import default_config, derive_learning_state, merge_feedback, select_candidates, validate_config
+from .policies import eligibility, validate_plan_candidates
+from .policy_store import PolicyMixin
+from .rules import default_config, derive_learning_state, merge_feedback, validate_config
 from . import storage
 
 
@@ -68,7 +70,7 @@ def _timestamp(value: object) -> str:
     return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
-class Coach:
+class Coach(PolicyMixin):
     """Own one local database and expose framework-independent use cases."""
 
     def __init__(self, db_path: Path) -> None:
@@ -132,7 +134,8 @@ class Coach:
             connection.execute("INSERT INTO config VALUES (1, 1, ?)", (storage.canonical_json(merged),))
             for problem in PROBLEMS:
                 connection.execute("INSERT INTO problems VALUES (?, ?)", (problem["id"], storage.canonical_json(problem)))
-            state = derive_learning_state([], merged)
+            self._seed_policy()
+            state = derive_learning_state([], merged, PROBLEMS)
             connection.execute("INSERT INTO learning_state VALUES (1, 0, ?)", (storage.canonical_json(state),))
             connection.execute("COMMIT")
         except BaseException as exc:
@@ -306,11 +309,26 @@ class Coach:
                 config = self.get_config()
                 state = self._state()
                 catalog = self.list_problems()
-                candidates = select_candidates(catalog["problems"], self._attempts(), config["config"], local_date, state)
+                policy = self.get_policy(local_date)
+                report = self._policy_report(policy["policy"], local_date)
+                candidates = report["selected"]
+                validate_plan_candidates(candidates, catalog["problems"], policy["policy"], config["config"])
+                for candidate in candidates:
+                    linked_id = candidate.get("attempt_id") or candidate.get("review_source_attempt_id")
+                    if linked_id is not None:
+                        linked = self._attempt(linked_id)
+                        if linked["problem_id"] != candidate["problem_id"] or linked["language"] != config["config"]["language"]:
+                            raise CoachError("policy_violation", "A selected practice link does not match its problem and language.")
+                if not candidates:
+                    reason = "no_eligible_metadata" if report["eligible_count"] == 0 else "no_schedulable_candidates"
+                    if report["remaining_capacity"] == 0 and report["capacity_limited_count"] > 0:
+                        reason = "daily_capacity_reserved"
+                    diagnostics = {**report, "reason": reason}
+                    return {"status": "blocked", "created": False, "training_date": local_date, "items": [], "policy_revision": policy["revision"], "policy_snapshot": policy["policy"], "diagnostics": diagnostics}
                 plan_id = str(uuid4())
                 connection.execute(
-                    "INSERT INTO plans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (plan_id, local_date, config["config"]["timezone"], config["revision"], storage.canonical_json(config["config"]), state["state_version"], catalog["catalog_version"], state["rule_version"], _now()),
+                    "INSERT INTO plans (id, training_date, timezone, config_revision, config_snapshot, state_version, catalog_version, rule_version, created_at, policy_revision, policy_snapshot, diagnostics) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (plan_id, local_date, config["config"]["timezone"], config["revision"], storage.canonical_json(config["config"]), state["state_version"], catalog["catalog_version"], state["rule_version"], _now(), policy["revision"], storage.canonical_json(policy["policy"]), storage.canonical_json(report)),
                 )
                 for position, candidate in enumerate(candidates, 1):
                     attempt_id = candidate.get("attempt_id")
@@ -325,6 +343,9 @@ class Coach:
                         else:
                             attempt_id = self._new_attempt(candidate["problem_id"], config["config"]["language"], local_date, "review" if source else "practice", source, review["id"] if review else None)
                     connection.execute("INSERT INTO plan_items VALUES (?, ?, ?, ?)", (plan_id, position, attempt_id, candidate["reason"]))
+                maximum = policy["policy"]["max_daily_count"]
+                if maximum is not None and len(self._reserved_attempt_ids(local_date)) > maximum:
+                    raise CoachError("policy_violation", "Publishing this plan would exceed reserved daily capacity.")
         return {**self.get_plan(local_date), "created": created}
 
     def get_plan(self, training_date: str | None = None) -> dict:
@@ -339,12 +360,26 @@ class Coach:
             raise CoachError("not_found", "No plan exists for this training date.")
         plan = dict(row)
         plan["config_snapshot"] = storage.decode_object(plan["config_snapshot"], "plan configuration")
+        plan["policy_snapshot"] = storage.decode_object(plan["policy_snapshot"], "plan policy")
+        plan["diagnostics"] = storage.decode_object(plan["diagnostics"], "plan diagnostics")
         attempts = {attempt["id"]: attempt for attempt in self._attempts()}
         problems = {problem["id"]: problem for problem in self.list_problems()["problems"]}
         plan["items"] = []
         for item in self._db().execute("SELECT * FROM plan_items WHERE plan_id = ? ORDER BY position", (plan["id"],)):
             attempt = attempts[item["attempt_id"]]
             plan["items"].append({"position": item["position"], "reason": item["reason"], "attempt_id": attempt["id"], "problem": problems[attempt["problem_id"]], "attempt": attempt})
+        current_policy = self.get_policy(local_date)
+        conflicts = []
+        for item in plan["items"]:
+            check = eligibility(item["problem"], current_policy["policy"])
+            if not check["allowed"]:
+                conflicts.append({"attempt_id": item["attempt_id"], "problem_id": item["problem"]["id"], "reasons": check["reasons"]})
+        maximum = current_policy["policy"]["max_daily_count"]
+        if maximum is not None and len(plan["items"]) > maximum:
+            conflicts.append({"reasons": ["max_daily_count_exceeded"], "count": len(plan["items"]), "limit": maximum})
+        plan["current_policy"] = current_policy
+        plan["current_policy_match"] = not conflicts
+        plan["current_policy_conflicts"] = conflicts
         return plan
 
     def _hash(self, payload: dict) -> str:
@@ -448,7 +483,7 @@ class Coach:
         """
         connection = self._db()
         attempts = self._attempts()
-        state = derive_learning_state(attempts, self.get_config()["config"])
+        state = derive_learning_state(attempts, self.get_config()["config"], self.list_problems()["problems"])
         connection.execute("UPDATE learning_state SET version = version + 1, body = ? WHERE singleton = 1", (storage.canonical_json(state),))
         lookup = {attempt["id"]: attempt for attempt in attempts}
         for row in connection.execute("SELECT id, attempt_id FROM reviews").fetchall():
@@ -487,6 +522,8 @@ class Coach:
         state = self._state()
         state["reviews"] = [dict(row) for row in self._db().execute("SELECT * FROM reviews ORDER BY due_date, id")]
         state["attempts"] = self._attempts()
+        policy = self.get_policy()
+        state["policy_paused"] = {"training_date": policy["training_date"], "policy_revision": policy["revision"], **self._paused_by_policy(policy["policy"], policy["training_date"])}
         return state
 
     def start_practice(self, problem_id: str, submission_id: str, language: str | None = None, review_id: str | None = None, training_date: str | None = None) -> dict:
@@ -516,6 +553,16 @@ class Coach:
             selected_date = self._date(training_date)
             if connection.execute("SELECT id FROM problems WHERE id = ?", (problem_id,)).fetchone() is None:
                 raise CoachError("not_found", "The problem is not in the local catalog.")
+            policy = self.get_policy(selected_date)
+            problem = next(item for item in self.list_problems()["problems"] if item["id"] == problem_id)
+            check = eligibility(problem, policy["policy"])
+            if not check["allowed"]:
+                raise CoachError("policy_violation", "The current policy excludes this practice.", {"problem_id": problem_id, "reasons": check["reasons"]})
+            maximum = policy["policy"]["max_daily_count"]
+            if maximum is not None:
+                reserved = self._reserved_attempt_ids(selected_date)
+                if len(reserved) >= maximum:
+                    raise CoachError("daily_capacity_exceeded", "The policy's daily practice capacity is already reserved.", {"reserved_count": len(reserved), "limit": maximum})
             source = None
             if review_id is not None:
                 review = connection.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
@@ -539,6 +586,41 @@ class Coach:
             self._refresh_state()
         return self.learning_state()
 
+    def migrate(self) -> dict:
+        """Inputs: none. Outputs: migration status and an automatic backup path.
+
+        Logic: verify a private backup, then add policy schema atomically and explicitly.
+        Dependencies: supported v1 metadata, SQLite DDL transactions, and backup checks.
+        """
+        self.close()
+        connection = storage.connect(self.path, allow_legacy=True)
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == storage.SCHEMA_VERSION:
+            self._connection = connection
+            return {"migrated": False, "from_version": version, "schema_version": version}
+        connection.close()
+        destination = self.path.with_name(self.path.name + ".before-v2-" + uuid4().hex + ".sqlite3")
+        self.backup(destination)
+        self._connection = storage.connect(self.path, allow_legacy=True)
+        connection = self._connection
+        try:
+            with storage.transaction(connection):
+                current = connection.execute("PRAGMA user_version").fetchone()[0]
+                if current == storage.SCHEMA_VERSION:
+                    return {"migrated": False, "from_version": current, "schema_version": current, "backup_path": str(destination)}
+                if current != 1:
+                    raise CoachError("unsupported_database", "No migration is defined for this schema version.")
+                storage.apply_schema(connection, storage.POLICY_SCHEMA)
+                self._seed_policy()
+                baseline = self.get_policy("0001-01-01")["policy"]
+                connection.execute("UPDATE plans SET policy_revision = 0, policy_snapshot = ?, diagnostics = ?", (storage.canonical_json(baseline), storage.canonical_json({"migrated_from_schema": 1})))
+                connection.execute(f"PRAGMA user_version = {storage.SCHEMA_VERSION}")
+            storage.check_schema(connection)
+        except BaseException:
+            self.close()
+            raise
+        return {"migrated": True, "from_version": version, "schema_version": storage.SCHEMA_VERSION, "backup_path": str(destination)}
+
     def integrity_check(self) -> dict:
         """Inputs: none. Outputs: database, schema, and foreign-key check results.
 
@@ -555,9 +637,10 @@ class Coach:
         self._state()
         self.list_problems()
         self._attempts()
-        for table, column in (("feedback", "changes"), ("feedback", "snapshot"), ("submissions", "receipt"), ("plans", "config_snapshot")):
+        for table, column in (("feedback", "changes"), ("feedback", "snapshot"), ("submissions", "receipt"), ("plans", "config_snapshot"), ("plans", "policy_snapshot"), ("plans", "diagnostics")):
             for row in connection.execute(f"SELECT {column} FROM {table}"):
                 storage.decode_object(row[0], f"{table}.{column}")
+        self.policy_history()
         return {"status": "ok", "schema_version": storage.SCHEMA_VERSION, "integrity": pages, "foreign_keys": foreign_keys}
 
     def backup(self, destination: Path) -> dict:
@@ -569,14 +652,28 @@ class Coach:
         destination = Path(destination).expanduser()
         if destination.exists() or destination.is_symlink():
             raise CoachError("already_exists", "The backup destination already exists.")
-        source = self._db()
+        temporary_source = False
+        try:
+            source = self._db()
+        except CoachError as exc:
+            if exc.code != "migration_required":
+                raise
+            source = storage.connect(self.path, allow_legacy=True)
+            temporary_source = True
+        version = source.execute("PRAGMA user_version").fetchone()[0]
+        physical = [row[0] for row in source.execute("PRAGMA integrity_check")]
+        foreign = list(source.execute("PRAGMA foreign_key_check"))
+        if physical != ["ok"] or foreign:
+            if temporary_source:
+                source.close()
+            raise CoachError("integrity_error", "The source database failed backup checks.")
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(descriptor)
         target = sqlite3.connect(str(destination), isolation_level=None)
         try:
             source.backup(target)
-            storage.check_schema(target)
+            storage.check_schema(target, allow_legacy=True)
             integrity = [row[0] for row in target.execute("PRAGMA integrity_check")]
             foreign_keys = list(target.execute("PRAGMA foreign_key_check"))
             if integrity != ["ok"] or foreign_keys:
@@ -584,6 +681,11 @@ class Coach:
         except BaseException:
             target.close()
             destination.unlink(missing_ok=True)
+            if temporary_source:
+                source.close()
             raise
         target.close()
-        return {"status": "verified", "schema_version": storage.SCHEMA_VERSION, "state_version": self._state()["state_version"]}
+        state_version = source.execute("SELECT version FROM learning_state WHERE singleton = 1").fetchone()[0]
+        if temporary_source:
+            source.close()
+        return {"status": "verified", "schema_version": version, "state_version": state_version}
