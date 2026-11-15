@@ -96,6 +96,13 @@ Self-reported complexity and result claims are unverified data.
 There is no automatic correctness-verification channel in the local MVP.
 Future assessments need separate source, method, scope, and evidence records.
 
+Topic scores are read-only projections, not another learning authority.
+For one language, use each problem's latest valid effective A-D attempt result.
+Each topic reports its independent A percentage, sample size, result counts,
+and existing stable-mastery count. No samples means no score. See the
+[score definition](web.md#topic-scores). The UI score does not change mastery
+or selection rules and needs no schema migration.
+
 ## Storage boundary
 
 SQLite is the only authority in the local mode.
@@ -105,3 +112,9 @@ the saved feedback history.
 
 An eventual move to a remote authority needs an explicit migration and cutover.
 An unavailable remote service must not silently cause a second local authority.
+
+Catalog discovery adds no schema or problem fields. Candidate files keep the
+five-field problem model. A preview is an ephemeral read-only result. Its
+`payload_hash` uses the same normalized operation content as an import receipt.
+Source URLs, query times, and Agent field checks belong in a separate private
+report. They are not program-verified correctness claims or saved learning state.

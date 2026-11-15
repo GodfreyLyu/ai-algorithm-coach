@@ -38,5 +38,13 @@ python3.12 -m unittest discover -s tests -v
 python3.12 scripts/check_comments.py
 ```
 
-The current milestone is the local Skill loop. The React TypeScript and FastAPI
-feedback UI has a documented contract. It is not implemented yet.
+The optional React TypeScript and FastAPI panel is local-only. Its scope is saved
+plans, feedback forms, database persistence, and derived topic scores. Keep the
+Skill path independent of Web dependencies. Do not add accounts, offline queues,
+policy management, or deployment unless the user requests them.
+TypeScript components, helpers, and callbacks use English function contracts too.
+Generated JSON lockfiles keep valid tool syntax; document their purpose in the
+Web guide instead of inserting invalid comments.
+Interactive session startup belongs in the runtime adapter. Keep plain planning
+and feedback commands headless. Managed servers must verify store and instance
+identity, keep control credentials private, and stop without PID-only signals.

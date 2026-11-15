@@ -2,6 +2,11 @@
 
 # Architecture
 
+The optional [local Web panel](web.md) is a thin React and FastAPI adapter.
+It reads existing plans and saves feedback through Coach. It does not publish
+plans or manage policies. Topic scores are read-only aggregates of current
+self-reported evidence. They do not replace weakness or mastery rules.
+
 This release is a local tool. A manually requested date uses the records available
 when its plan is generated. It does not reconstruct an earlier learning snapshot.
 It also does not forecast future results. A dated policy can span a week while
@@ -32,6 +37,12 @@ It contains saved configuration, plans, attempts, feedback history, and receipts
 Derived state can be rebuilt. Chat context is not a data source.
 It also stores immutable policy proposals, activated revisions, exact-hash
 approval records, and the append-only imported catalog metadata.
+
+The host Agent may discover public problems using its own network tools.
+It prepares metadata; the core validates and previews the batch, then imports it
+with existing transactions and receipts when authorized. `remote_fetch` remains
+false. Private source reports are supporting evidence, not a second catalog or
+learning authority. See [catalog discovery](catalog-discovery.md).
 
 The Skill host must allow tool execution and persistent local storage.
 Without those abilities it can provide tutoring, but it must say feedback is not
@@ -91,10 +102,13 @@ The same ID with different content produces a conflict.
 This is retryable idempotent processing. It is not an end-to-end exactly-once claim.
 There is no separate asynchronous sync worker in the local MVP.
 
-## Planned adapters
+## Adapters
 
-The next UI uses React with TypeScript and a FastAPI adapter.
-It will call the same application use cases. See [the UI contract](future-ui.md).
+The local UI uses React with TypeScript and a FastAPI adapter.
+It calls the same application use cases. See [the UI contract](future-ui.md).
+The interactive `start-session` adapter prepares a plan and ensures a local Web
+instance. Process discovery, locking, readiness, and shutdown stay outside Coach.
+Read [runtime setup](web.md) for the identity and standalone bundle boundary.
 A future MCP adapter must also remain thin.
 Neither adapter should contain its own selection rules or learning database.
 
@@ -104,6 +118,7 @@ should work without an active model session.
 
 ## Explicit limits
 
-There is no web server, browser login, remote API, running MCP transport, scheduler,
-or cloud deployment in this delivery. No private prototype is imported.
+The optional Web server binds only to loopback. There is no browser login,
+remote API, running MCP transport, scheduler, or cloud deployment in this delivery.
+No private prototype is imported.
 Real AI client compatibility and any future deployment require separate checks.

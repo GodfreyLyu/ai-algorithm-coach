@@ -2,8 +2,8 @@
 
 # GitHub Actions and pull requests
 
-The current release uses Python 3.12 and the standard library.
-CI checks the local Skill loop. The planned React and FastAPI UI has no build yet.
+The core uses Python 3.12 and the standard library.
+CI also checks the optional FastAPI adapter and React TypeScript panel on Node.js 24.
 
 ## Triggers and names
 
@@ -18,7 +18,7 @@ A newer run cancels an older run for the same PR or branch.
 | --- | --- |
 | `Python syntax` | Compile all Python source, tools, Skill scripts, and tests. Parse package, example, and ruleset TOML. |
 | `Workflow syntax` | Use actionlint to check workflow structure, expressions, and shell commands. |
-| `Logic tests` | Run all unit tests, including transaction, migration, CLI, and standalone bundle tests. |
+| `Logic tests` | Test the dependency-free core, optional HTTP adapter, scores, frontend build, and real browser saves with Skill readback. |
 | `Documentation content` | Check file purposes, function contracts, local links, anchors, fences, and executable public examples. |
 
 Keep these names unique and stable. The main branch rules use the exact job names.
@@ -36,10 +36,20 @@ python3.12 scripts/check_comments.py
 python3.12 scripts/check_docs.py
 ```
 
+For Web changes, run the optional environment and browser checks in
+[the local panel guide](web.md#verify). Browser checks use a temporary synthetic
+database and an actual local server. They stop it after the check.
+
 Run `actionlint` from the repository root when changing a workflow.
 CI downloads actionlint 1.7.12 and verifies its pinned SHA-256 checksum.
 GitHub actions use full commit hashes with version comments.
-The Python runtime and tests need no third-party Python packages.
+The core checks run without third-party Python packages.
+The Web checks install pinned Python packages and the npm lockfile. Chromium
+verifies a form save, correction history, response-loss recovery, restart
+persistence, scores, and mobile layout. It uses a freshly built standalone Web
+Skill with automatic startup, reuse, verified shutdown, and store-bound links.
+Stale tabs must retain drafts without writing to a copied database at the old
+address. These checks do not use private data.
 
 Documentation tests run the actual README quick start and both public TOML examples.
 They use synthetic records in temporary directories outside the checkout.

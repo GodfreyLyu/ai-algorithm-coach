@@ -92,13 +92,19 @@ practice has no implicit daily limit from `daily_count`.
 
 ## Metadata and schema
 
-Use `catalog import --file PATH --submission ACTION_ID` only for curated metadata.
-TOML uses a `problems` array. JSON uses an object with a `problems` array.
+Read [catalog discovery](catalog-discovery.md) for host-assisted search, source
+checks, import authorization, preview, receipt checks, and readback.
+Use `catalog preview --file PATH` before a new metadata batch. Preview is read-only.
+Use `catalog import --file PATH --submission ACTION_ID --expected-hash PAYLOAD_HASH`
+for the authorized batch. The hash comes from that batch's allowed preview.
+TOML uses `[[problems]]`. JSON uses an object with a `problems` array.
 Do not pass a raw JSON array. Policy files use their field names at the top level.
 Entries contain ID, title, difficulty, tags, and official LeetCode URL only.
 Do not import statements, paid content, practice logs, private paths, or credentials.
-An accepted official URL is not proof that tags or solutions are correct.
+An accepted URL shape is not proof that the page exists or its fields are correct.
 Imports append metadata. They cannot change an existing problem identity.
+Import does not activate a policy or force new problems into a frozen plan.
+Use the policy proposal, preview, and exact approval steps above for scope changes.
 
 If the tool reports schema version 1, use the explicit `migrate` operation.
 It automatically creates and verifies a private consistent backup before changing
