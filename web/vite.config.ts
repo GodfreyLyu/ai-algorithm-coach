@@ -2,8 +2,6 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  // Vite does not discover our explicit .jsonc type-check configuration.
-  esbuild: { jsx: "automatic", jsxImportSource: "react" },
   server: {
     host: "127.0.0.1",
     port: 5173,

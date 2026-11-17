@@ -59,10 +59,10 @@ function inspect(file, text) {
   const failures = [];
   const extension = path.extname(file);
   if (path.basename(file) === "package-lock.json") return failures;
-  if (extension === ".json") {
+  if (extension === ".json" && path.basename(file) !== "tsconfig.json") {
     if (!JSON.parse(text)._comment) failures.push(`${name}: missing legal purpose metadata`);
   } else {
-    const prefix = extension === ".html" || extension === ".md" ? "<!--" : extension === ".css" ? "/*" : extension === ".jsonc" ? "//" : "/**";
+    const prefix = extension === ".html" || extension === ".md" ? "<!--" : extension === ".css" ? "/*" : extension === ".jsonc" || extension === ".json" ? "//" : "/**";
     if (!text.trimStart().startsWith(prefix)) failures.push(`${name}: missing file purpose comment`);
   }
   if (![".ts", ".tsx", ".mjs"].includes(extension)) return failures;

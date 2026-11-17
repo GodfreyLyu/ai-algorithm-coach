@@ -1,7 +1,7 @@
 /** File purpose: Read existing plans and connect record forms with topic scores. */
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { ApiError, errorMessage, request } from "./api";
-import { FeedbackForm } from "./FeedbackForm";
+import { FeedbackForm, type EditorDraft } from "./FeedbackForm";
 import { ScoresView } from "./ScoresView";
 import type { Context, Plan, PlanItem, Receipt, Scores } from "./types";
 
@@ -53,17 +53,29 @@ function readSessionLink(): SessionLink {
  * Dependencies: The standard date formatter.
  */
 function displayDate(value: string): string {
-  return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
+  return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
+}
+
+/**
+ * Inputs: None.
+ * Outputs: The result reference for the plan toolbar.
+ * Logic: Explain the six self-reported outcomes in one disclosure.
+ * Dependencies: The core feedback meanings.
+ */
+function ResultGuide() {
+  return <div className="guide-content"><p>Choose a result after each problem. Time and details are optional.</p>
+    <dl className="result-guide"><div><dt>A</dt><dd>Independent AC</dd></div><div><dt>B</dt><dd>AC with a hint</dd></div><div><dt>C</dt><dd>AC after the answer</dd></div><div><dt>D</dt><dd>Not yet AC</dd></div><div><dt>E</dt><dd>Defer until later</dd></div><div><dt>F</dt><dd>Skip this attempt</dd></div></dl>
+    <p className="guide-footnote">AC results are self-reported. Stable mastery needs spaced practice. E and F do not mean complete.</p></div>;
 }
 
 /**
  * Inputs: A plan item, bound store ID, editor state, and shared callbacks.
- * Outputs: One saved problem card and its optional editor.
+ * Outputs: One aligned problem row and its optional editor.
  * Logic: Show current evidence before editing a specific stable attempt.
  * Dependencies: FeedbackForm and the saved plan contract.
  */
-function ProblemCard({ item, storeId, open, locked, workspaceLocked, onOpen, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: {
-  item: PlanItem; storeId: string; open: boolean; locked: boolean; workspaceLocked: boolean; onOpen: (id: string) => void;
+function ProblemCard({ item, storeId, drafts, open, locked, workspaceLocked, onOpen, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: {
+  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; open: boolean; locked: boolean; workspaceLocked: boolean; onOpen: (id: string) => void;
   onSaved: (receipt: Receipt) => void; onPendingChange: (id: string | null) => void; onReload: () => void;
   onWorkspaceMismatch: () => void;
 }) {
@@ -89,17 +101,16 @@ function ProblemCard({ item, storeId, open, locked, workspaceLocked, onOpen, onS
   return (
     <article className={`problem-card ${open ? "open" : ""}`} data-attempt-id={item.attempt_id}>
       <div className="problem-header"><span className="problem-number">{String(item.position).padStart(2, "0")}</span>
-        <div className="problem-content"><div className="problem-meta"><span className={`difficulty ${item.problem.difficulty}`}>{item.problem.difficulty}</span><span>{item.problem.id.replace("leetcode:", "#")}</span><span className="reason-label">{item.reason.replaceAll("_", " ")}</span></div>
-          <h2><a href={item.problem.url} target="_blank" rel="noreferrer">{item.problem.title}<span aria-hidden="true"> ↗</span></a></h2>
-          <div className="problem-tags">{item.problem.tags.map(renderTag)}<span className="attempt-language">{item.attempt.language}</span></div>
+        <div className="problem-content"><h2><a href={item.problem.url} target="_blank" rel="noreferrer">{item.problem.title}<span aria-hidden="true"> ↗</span></a></h2>
+          <div className="problem-meta"><span className={`difficulty ${item.problem.difficulty}`}>{item.problem.difficulty}</span><span>{item.problem.id.replace("leetcode:", "#")}</span><span className="reason-label">{item.reason.replaceAll("_", " ")}</span><span className="attempt-language">{item.attempt.language}</span><span className="problem-tags">{item.problem.tags.map(renderTag)}</span></div>
         </div>
-        <button type="button" className={`record-button ${open ? "active" : ""}`} onClick={toggleEditor} disabled={locked} aria-expanded={open} aria-label={`${open ? "Close" : "Record"} ${item.problem.title}`}>{open ? "Close" : "Record"}<span aria-hidden="true">{open ? " −" : " +"}</span></button>
+        <div className="problem-status"><span className={`status-dot ${result ? `result-${result}` : ""}`} aria-hidden="true" />
+          <span>{result ? `${result} · ${RESULT_LABELS[result]}` : "No result recorded"}</span>
+        </div>
+        <div className="problem-time">{feedback?.elapsed_minutes != null ? <>{feedback.elapsed_minutes} <span className="time-unit">min</span></> : <><span aria-hidden="true">—</span><span className="sr-only">Time not recorded</span></>}</div>
+        <button type="button" className={`record-button ${open ? "active" : ""}`} onClick={toggleEditor} disabled={locked} aria-expanded={open} aria-controls={`editor-${item.attempt_id}`} aria-label={`${open ? "Close" : feedback ? "Update record for" : "Record result for"} ${item.problem.title}`}>{open ? "Close" : feedback ? "Update record" : "Record result"}<span aria-hidden="true">{open ? " −" : " +"}</span></button>
       </div>
-      <div className="problem-status"><span className={`status-dot ${result ? `result-${result}` : ""}`} />
-        <span>{result ? `${result} · ${RESULT_LABELS[result]}` : "No result recorded"}</span>
-        {feedback?.elapsed_minutes != null && <span className="recorded-time">{feedback.elapsed_minutes} min</span>}
-      </div>
-      {open && <FeedbackForm key={`${storeId}:${item.attempt_id}:${item.attempt.revision}`} item={item} storeId={storeId} workspaceLocked={workspaceLocked} onSaved={onSaved} onPendingChange={onPendingChange} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />}
+      <div id={`editor-${item.attempt_id}`} hidden={!open}>{open && <FeedbackForm key={`${storeId}:${item.attempt_id}:${item.attempt.revision}`} item={item} storeId={storeId} drafts={drafts} workspaceLocked={workspaceLocked} onSaved={onSaved} onPendingChange={onPendingChange} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />}</div>
     </article>
   );
 }
@@ -111,6 +122,7 @@ function ProblemCard({ item, storeId, open, locked, workspaceLocked, onOpen, onS
  * Dependencies: React, browser fetch, FeedbackForm, and ScoresView.
  */
 export function App() {
+  const drafts = useRef(new Map<string, EditorDraft>());
   const [sessionLink] = useState<SessionLink>(readSessionLink);
   const [context, setContext] = useState<Context | null>(null);
   const [startupError, setStartupError] = useState<{ title: string; message: string } | null>(
@@ -323,7 +335,7 @@ export function App() {
    * Dependencies: ProblemCard and the app callbacks.
    */
   function renderProblem(item: PlanItem) {
-    return <ProblemCard key={item.attempt_id} item={item} storeId={context!.store_id} open={activeAttempt === item.attempt_id} locked={locked} workspaceLocked={workspaceLost}
+    return <ProblemCard key={item.attempt_id} item={item} storeId={context!.store_id} drafts={drafts.current} open={activeAttempt === item.attempt_id} locked={locked} workspaceLocked={workspaceLost}
       onOpen={toggleAttempt} onSaved={handleSaved} onPendingChange={handlePendingChange} onReload={reloadRecords} onWorkspaceMismatch={handleWorkspaceMismatch} />;
   }
 
@@ -344,27 +356,28 @@ export function App() {
         {workspaceLost && <div className="message error" role="alert"><strong>This is a different training workspace.</strong><p>Your draft remains here. Start a new session in your Skill and use its feedback link. This page will not switch databases.</p></div>}
         {context && tab === "scores" && <ScoresView scores={scores} loading={scoresLoading} error={scoresError} />}
         {context && tab === "plan" && <>
-          <div className="view-heading"><div><p className="eyebrow">Small steps. A lasting record.</p><h1>Practice, recorded.</h1><p className="view-description">A quiet place to close the loop after each problem.</p></div>
+          <div className="view-heading"><div><h1>Training record</h1><p className="view-description">{trainingDate ? displayDate(trainingDate) : "Choose a date to read its saved plan"}</p></div>
             <label className="date-control"><span>Training date</span><input aria-label="Training date" type="date" min="0001-01-01" max="9999-12-31" value={trainingDate} onChange={changeDate} disabled={locked} /></label>
           </div>
           {notice && <div className="message success" role="status"><span className="success-check" aria-hidden="true">✓</span>{notice}</div>}
           <div className="plan-layout"><div className="plan-column">
-            <div className="section-heading"><div><h2>{trainingDate ? displayDate(trainingDate) : "Your training plan"}</h2><p>{plan ? `${plan.items.length} problems · ${recordedCount} with a result` : "Your saved daily plan"}</p></div><button type="button" className="text-button" onClick={reloadRecords} disabled={locked || planLoading || !trainingDate}>Refresh</button></div>
+            <div className="plan-toolbar"><div className="section-heading"><h2>Saved plan</h2><p>{plan ? `${plan.items.length} problems · ${recordedCount} with a result` : "Your saved daily plan"}</p></div>
+              <div className="plan-tools"><button type="button" className="text-button" onClick={reloadRecords} disabled={locked || planLoading || !trainingDate}>Refresh</button></div>
+              <details className="result-help"><summary>Result guide <span>A–F</span></summary><ResultGuide /></details>
+            </div>
             {planError && <div className="message error" role="alert"><strong>The plan could not be read.</strong><p>{planError}</p></div>}
             {planLoading && <div className="loading-panel" role="status">{plan ? "Refreshing the saved plan…" : "Reading the saved plan…"}</div>}
             {!trainingDate && !planLoading && <div className="empty-state"><h2>Choose a training date</h2><p>Select a date to read its existing plan.</p></div>}
-            {trainingDate && !planLoading && !plan && !planError && <div className="empty-state"><span className="empty-icon" aria-hidden="true">↗</span><p className="eyebrow">A fresh page</p><h2>No saved plan for this date</h2><p>Ask your Algorithm Coach Skill to generate a plan.<br />Then refresh here to record your practice.</p></div>}
+            {trainingDate && !planLoading && !plan && !planError && <div className="empty-state"><h2>No saved plan for this date</h2><p>Ask your Algorithm Coach Skill to generate a plan.<br />Then refresh here to record your practice.</p></div>}
             {plan && <>
               {Boolean(plan.current_policy_conflicts?.length) && <div className="message warning"><strong>This saved plan has a scope conflict.</strong><p>Review it in your Skill. Its published items have been preserved.</p></div>}
+              {plan.items.length > 0 && <div className="problem-list-heading" aria-hidden="true"><span>#</span><span>Problem</span><span>Result</span><span>Time</span><span>Record</span></div>}
               <div className="problem-list">{plan.items.map(renderProblem)}</div>
             </>}
-          </div><aside className="guide-panel"><span className="guide-rule" /><p className="eyebrow">Leave a useful signal</p><h2>How did it go?</h2><p>One choice is enough to start.<br />Add time and details when useful.</p>
-            <dl className="result-guide"><div><dt>A</dt><dd>Independent AC</dd></div><div><dt>B</dt><dd>AC with a hint</dd></div><div><dt>C</dt><dd>AC after the answer</dd></div><div><dt>D</dt><dd>Not yet AC</dd></div><div><dt>E</dt><dd>Defer until later</dd></div><div><dt>F</dt><dd>Skip this attempt</dd></div></dl>
-            <p className="guide-footnote">AC results are self-reported.<br />A single A is a good sign. Stable mastery needs spaced practice.</p>
-          </aside></div>
+          </div></div>
         </>}
       </main>
-      <footer className="app-footer"><span>Your practice. Your pace.</span><span>Local records · Self-reported evidence</span></footer>
+      <footer className="app-footer"><span>Drafts stay in this page until you reload or close it</span><span>Local records · Self-reported evidence</span></footer>
     </div>
   );
 }
