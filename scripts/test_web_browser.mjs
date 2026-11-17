@@ -87,7 +87,7 @@ function stopServer(directory = data) {
  */
 async function openCard(page, item) {
   const card = page.locator(`[data-attempt-id="${item.attempt_id}"]`);
-  await card.getByRole("button", { name: `Record ${item.problem.title}`, exact: true }).click();
+  await card.getByRole("button", { name: /^(Record result for|Update record for) / }).click();
   return card;
 }
 
@@ -149,17 +149,48 @@ async function main() {
     function capturePageError(error) { pageErrors.push(error.message); }
     page.on("pageerror", capturePageError);
     await page.goto(session.web.url);
-    await expect(page.getByRole("heading", { name: "Practice, recorded." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Training record" })).toBeVisible();
     await expect(page.getByLabel("Training date", { exact: true })).toHaveValue(trainingDate);
     await expect(page.locator(".problem-card")).toHaveCount(5);
     await page.screenshot({ path: path.join(artifacts, "plan-desktop.png"), fullPage: true });
 
     let card = await openCard(page, first);
-    await expect(card.getByRole("button", { pressed: true })).toHaveCount(0);
-    await card.getByRole("button", { name: /Independent AC/ }).click();
+    await expect(card.getByRole("radio", { checked: true })).toHaveCount(0);
+    await card.getByRole("radio", { name: /Independent AC/ }).check();
+    await page.keyboard.press("ArrowRight");
+    await expect(card.getByRole("radio", { name: /AC with hints/ })).toBeChecked();
+    await page.keyboard.press("ArrowLeft");
+    await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
+    await expect(card.getByRole("radio", { checked: true })).toHaveCount(1);
     await card.locator('[name="elapsed_minutes"]').fill("25");
     await card.getByText("More details", { exact: false }).click();
     await card.locator('[name="boundary_tests"]').selectOption("false");
+    await card.getByRole("button", { name: `Close ${first.problem.title}`, exact: true }).click();
+    card = await openCard(page, first);
+    await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
+    await card.getByText("More details", { exact: false }).click();
+    await expect(card.locator('[name="boundary_tests"]')).toHaveValue("false");
+    const otherDraft = await openCard(page, second);
+    await expect(otherDraft.getByRole("radio", { checked: true })).toHaveCount(0);
+    await expect(otherDraft.locator('[name="elapsed_minutes"]')).toHaveValue("");
+    card = await openCard(page, first);
+    await page.getByRole("button", { name: "Topic scores", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Topic scores", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Plan & records", exact: true }).click();
+    card = page.locator(`[data-attempt-id="${first.attempt_id}"]`);
+    if (!(await card.locator("form").count())) card = await openCard(page, first);
+    await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
+    await page.getByLabel("Training date", { exact: true }).fill("2099-01-01");
+    await expect(page.getByRole("heading", { name: "No saved plan for this date" })).toBeVisible();
+    await page.getByLabel("Training date", { exact: true }).fill(trainingDate);
+    await expect(page.locator(".problem-card")).toHaveCount(5);
+    card = await openCard(page, first);
+    await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
+    await card.getByText("More details", { exact: false }).click();
+    await expect(card.locator('[name="boundary_tests"]')).toHaveValue("false");
     await page.screenshot({ path: path.join(artifacts, "form-desktop.png"), fullPage: true });
     await card.getByRole("button", { name: /Save feedback/ }).click();
     await expect(page.getByRole("status").filter({ hasText: "Saved to your record" })).toBeVisible();
@@ -184,16 +215,18 @@ async function main() {
     card = page.locator(`[data-attempt-id="${first.attempt_id}"]`);
     if (!(await card.locator("form").count())) card = await openCard(page, first);
     await card.getByLabel("How are you updating this record?").selectOption("correction");
-    await card.getByRole("button", { name: /AC with hints/ }).click();
+    await card.getByRole("radio", { name: /AC with hints/ }).check();
     await card.locator('[name="elapsed_minutes"]').fill("30");
     await card.getByRole("button", { name: /Save feedback/ }).click();
     await expect(page.getByRole("status").filter({ hasText: "revision 2" })).toBeVisible();
     const corrected = skill(["history", "--attempt", first.attempt_id]);
     assert.deepEqual(corrected.revisions.map(resultOfRevision), ["A", "B"]);
     assert.equal(corrected.attempt.feedback.boundary_tests, false);
+    await expect(card.getByRole("radio", { name: /AC with hints/ })).toBeChecked();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("30");
 
     card = await openCard(page, second);
-    await card.getByRole("button", { name: /Not yet AC/ }).click();
+    await card.getByRole("radio", { name: /Not yet AC/ }).check();
     await card.locator('[name="elapsed_minutes"]').fill("20");
     /**
      * Inputs: The next browser feedback request.
@@ -209,6 +242,8 @@ async function main() {
     await card.getByRole("button", { name: /Save feedback/ }).click();
     await expect(card.getByRole("button", { name: "Retry this save", exact: true })).toBeVisible();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("20");
+    await expect(card.getByRole("radio", { name: /Not yet AC/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Topic scores", exact: true })).toBeDisabled();
     await card.getByRole("button", { name: "Retry this save", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "revision 1" })).toBeVisible();
     const recovered = skill(["history", "--attempt", second.attempt_id]);
@@ -216,7 +251,16 @@ async function main() {
     assert.equal(recovered.attempt.feedback.result, "D");
 
     card = await openCard(page, third);
-    await card.getByRole("button", { name: /Do it later/ }).click();
+    await expect(card.locator('[name="defer_until"]')).toBeHidden();
+    await expect(card.locator('[name="skip_until"]')).toBeHidden();
+    await card.getByRole("radio", { name: /Do it later/ }).check();
+    await expect(card.locator('[name="defer_until"]')).toBeVisible();
+    await expect(card.locator('[name="skip_until"]')).toBeHidden();
+    await card.getByRole("radio", { name: /End this attempt/ }).check();
+    await expect(card.locator('[name="skip_until"]')).toBeVisible();
+    await expect(card.locator('[name="defer_until"]')).toBeHidden();
+    await card.getByRole("radio", { name: /Do it later/ }).check();
+    await card.locator('[name="defer_until"]').fill("2026-01-05");
     await card.locator('[name="elapsed_minutes"]').fill("0");
     let stalledRoute = null;
     /**
@@ -240,6 +284,7 @@ async function main() {
     assert.equal(timedOut.revisions.length, 1);
     assert.equal(timedOut.attempt.feedback.result, "E");
     assert.equal(timedOut.attempt.feedback.elapsed_minutes, 0);
+    assert.equal(timedOut.attempt.feedback.defer_until, "2026-01-05");
 
     const oldInstance = session.web.instance_id;
     stopServer();
@@ -274,9 +319,31 @@ async function main() {
     card = await openCard(page, first);
     await page.screenshot({ path: path.join(artifacts, "form-mobile.png"), fullPage: true });
     assert.equal(await page.evaluate(fitsViewport), true, "The mobile form must not overflow.");
+    const choiceSizes = await card.locator(".result-choice").evaluateAll(measureChoices);
+    assert.equal(choiceSizes.length, 6);
+    for (const size of choiceSizes) {
+      assert.ok(size.height >= 44, `Result targets must be at least 44px tall, got ${size.height}.`);
+      assert.ok(size.label >= 12 && size.detail >= 12, "Mobile result labels and details must be at least 12px.");
+    }
+    const actionHeights = await page.locator(".record-button, .primary-button, .date-control input").evaluateAll(measureHeights);
+    for (const height of actionHeights) assert.ok(height >= 44, `Mobile actions must be at least 44px tall, got ${height}.`);
     await page.getByRole("button", { name: "Topic scores", exact: true }).click();
     await page.screenshot({ path: path.join(artifacts, "scores-mobile.png"), fullPage: true });
     assert.equal(await page.evaluate(fitsViewport), true, "Mobile scores must not overflow.");
+    for (const width of [320, 768, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.getByRole("button", { name: "Plan & records", exact: true }).click();
+      card = page.locator(`[data-attempt-id="${first.attempt_id}"]`);
+      if (await card.locator("form").count()) {
+        await card.getByRole("button", { name: `Close ${first.problem.title}`, exact: true }).click();
+      }
+      assert.equal(await page.evaluate(fitsViewport), true, `The plan must not overflow at ${width}px.`);
+      card = await openCard(page, first);
+      assert.equal(await page.evaluate(fitsViewport), true, `The feedback form must not overflow at ${width}px.`);
+      await page.getByRole("button", { name: "Topic scores", exact: true }).click();
+      assert.equal(await page.evaluate(fitsViewport), true, `Topic scores must not overflow at ${width}px.`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
 
     const guardPage = await browser.newPage();
     guardPage.on("pageerror", capturePageError);
@@ -294,12 +361,12 @@ async function main() {
 
     await page.getByRole("button", { name: "Plan & records", exact: true }).click();
     card = await openCard(page, fourth);
-    await card.getByRole("button", { name: /Not yet AC/ }).click();
+    await card.getByRole("radio", { name: /Not yet AC/ }).check();
     await card.locator('[name="elapsed_minutes"]').fill("15");
     await guardPage.goto(session.web.url);
     await expect(guardPage.locator(".problem-card")).toHaveCount(5);
     const refreshCard = await openCard(guardPage, fourth);
-    await refreshCard.getByRole("button", { name: /Not yet AC/ }).click();
+    await refreshCard.getByRole("radio", { name: /Not yet AC/ }).check();
     await refreshCard.locator('[name="elapsed_minutes"]').fill("17");
     const copied = path.join(temporary, "copied-private");
     fs.mkdirSync(copied);
@@ -328,13 +395,13 @@ async function main() {
     await expect(guardPage.locator("form")).toHaveCount(0);
     await expect(guardPage.locator(".problem-card")).toHaveCount(0);
     await guardPage.goto(copiedSession.web.url);
-    await expect(guardPage.getByRole("heading", { name: "Practice, recorded." })).toBeVisible();
+    await expect(guardPage.getByRole("heading", { name: "Training record" })).toBeVisible();
     await expect(guardPage.getByLabel("Training date", { exact: true })).toHaveValue(trainingDate);
     await expect(guardPage.locator(".problem-card")).toHaveCount(5);
     await expect(guardPage.locator(`[data-attempt-id="${fifth.attempt_id}"]`)).toContainText("D · Not yet AC");
     await guardPage.close();
     assert.deepEqual(pageErrors, [], "The browser must have no uncaught runtime errors.");
-    process.stdout.write(`Standalone Skill startup, reuse, managed restart, browser saves, recovery, scores, and store guards passed.\nScreenshots: ${artifacts}\n`);
+    process.stdout.write(`Standalone Skill startup, reuse, managed restart, browser saves, draft retention, conditional dates, recovery, scores, and store guards passed.\nScreenshots: ${artifacts}\n`);
   } catch (failure) {
     if (page) await page.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(ignoreScreenshotFailure);
     if (pageErrors.length) process.stderr.write(`Browser runtime errors: ${pageErrors.join("; ")}\n`);
@@ -349,6 +416,36 @@ async function main() {
     if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Managed test cleanup failed; temporary files were retained.");
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+}
+
+/**
+ * Inputs: The rendered result-choice labels from the browser document.
+ * Outputs: Their target heights and visible label and detail font sizes.
+ * Logic: Measure computed typography and touch targets at the mobile viewport.
+ * Dependencies: Browser layout geometry and getComputedStyle.
+ */
+function measureChoices(choices) {
+  const sizes = [];
+  for (const choice of choices) {
+    sizes.push({
+      height: choice.getBoundingClientRect().height,
+      label: Number.parseFloat(getComputedStyle(choice.querySelector("strong") || choice).fontSize),
+      detail: Number.parseFloat(getComputedStyle(choice.querySelector("small") || choice).fontSize),
+    });
+  }
+  return sizes;
+}
+
+/**
+ * Inputs: The rendered action controls from the browser document.
+ * Outputs: Each action's visible target height.
+ * Logic: Measure hit areas independently of a screenshot's appearance.
+ * Dependencies: Browser layout geometry.
+ */
+function measureHeights(controls) {
+  const heights = [];
+  for (const control of controls) heights.push(control.getBoundingClientRect().height);
+  return heights;
 }
 
 /**

@@ -1,4 +1,4 @@
-// File purpose: Type-check browser components and the local Vite configuration.
+// File purpose: Share browser and Vite type settings with builds and editors.
 {
   "compilerOptions": {
     "target": "ES2022",

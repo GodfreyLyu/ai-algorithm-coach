@@ -7,6 +7,12 @@ type Field = Exclude<keyof Feedback, "assistance">;
 type Draft = Record<Field, string>;
 type Mode = "" | "progress" | "correction";
 
+export interface EditorDraft {
+  values: Draft;
+  touched: Set<Field>;
+  mode: Mode;
+}
+
 const RESULTS: { value: Result; label: string; detail: string }[] = [
   { value: "A", label: "Independent AC", detail: "No hints" },
   { value: "B", label: "AC with hints", detail: "Some help" },
@@ -19,6 +25,7 @@ const RESULTS: { value: Result; label: string; detail: string }[] = [
 interface FormProps {
   item: PlanItem;
   storeId: string;
+  drafts: Map<string, EditorDraft>;
   workspaceLocked: boolean;
   onSaved: (receipt: Receipt) => void;
   onPendingChange: (attemptId: string | null) => void;
@@ -90,26 +97,26 @@ function sameChanges(expected: Partial<Feedback>, saved: Partial<Feedback>): boo
 
 /**
  * Inputs: One result option, its selection state, and a selection handler.
- * Outputs: An accessible outcome button.
+ * Outputs: An accessible single-choice outcome.
  * Logic: Forward a deliberate choice without setting an implicit default.
  * Dependencies: React and the parent form.
  */
-function ResultButton({ option, selected, onSelect }: {
+function ResultChoice({ option, selected, onSelect }: {
   option: typeof RESULTS[number]; selected: boolean; onSelect: (result: Result) => void;
 }) {
   /**
-   * Inputs: A click on this result choice.
+   * Inputs: A native radio selection.
    * Outputs: The explicit result value to the parent.
-   * Logic: Select only the value belonging to this button.
+   * Logic: Select only the value belonging to this radio.
    * Dependencies: The onSelect prop.
    */
   function selectResult() { onSelect(option.value); }
   return (
-    <button type="button" className={`result-choice ${selected ? "selected" : ""}`}
-      aria-pressed={selected} onClick={selectResult}>
+    <label className={`result-choice ${selected ? "selected" : ""}`} data-result={option.value}>
       <span className="result-letter">{option.value}</span>
       <span><strong>{option.label}</strong><small>{option.detail}</small></span>
-    </button>
+      <input type="radio" name="result" value={option.value} checked={selected} onChange={selectResult} />
+    </label>
   );
 }
 
@@ -119,13 +126,15 @@ function ResultButton({ option, selected, onSelect }: {
  * Logic: Send changed fields, match committed receipts, and retain unknown saves.
  * Dependencies: React state, the local API, and browser UUID generation.
  */
-export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: FormProps) {
+export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: FormProps) {
   const feedback = item.attempt.feedback;
   const [boundStoreId] = useState(storeId);
+  const draftKey = `${boundStoreId}:${item.attempt_id}:${item.attempt.revision}`;
+  const retained = drafts.get(draftKey);
   const isComplete = feedback?.result === "A" || feedback?.result === "B" || feedback?.result === "C";
-  const [draft, setDraft] = useState<Draft>(makeDraft(feedback));
-  const [touched, setTouched] = useState<Set<Field>>(new Set());
-  const [mode, setMode] = useState<Mode>(isComplete ? "" : "progress");
+  const [draft, setDraft] = useState<Draft>(retained?.values ?? makeDraft(feedback));
+  const [touched, setTouched] = useState<Set<Field>>(retained?.touched ?? new Set());
+  const [mode, setMode] = useState<Mode>(retained?.mode ?? (isComplete ? "" : "progress"));
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<FeedbackRequest | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -142,8 +151,11 @@ export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendin
    */
   function changeField(field: Field, value: string) {
     if (editDisabled) return;
-    setDraft({ ...draft, [field]: value });
-    setTouched(new Set(touched).add(field));
+    const values = { ...draft, [field]: value };
+    const fields = new Set(touched).add(field);
+    setDraft(values);
+    setTouched(fields);
+    drafts.set(draftKey, { values, touched: fields, mode });
     setError(null);
   }
 
@@ -180,7 +192,9 @@ export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendin
    * Dependencies: The mode select and local state.
    */
   function handleModeChange(event: ChangeEvent<HTMLSelectElement>) {
-    setMode(event.currentTarget.value as Mode);
+    const nextMode = event.currentTarget.value as Mode;
+    setMode(nextMode);
+    if (touched.size) drafts.set(draftKey, { values: draft, touched, mode: nextMode });
     setError(null);
   }
 
@@ -205,6 +219,7 @@ export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendin
     setAcknowledged(true);
     setPending(null);
     setError(null);
+    drafts.delete(draftKey);
     onPendingChange(null);
     onSaved(receipt);
   }
@@ -295,13 +310,24 @@ export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendin
   }
 
   /**
+   * Inputs: A deliberate reload after a revision conflict.
+   * Outputs: The current saved record without its stale draft.
+   * Logic: Discard this revision's input only after the reload action.
+   * Dependencies: The in-memory draft map and parent reload handler.
+   */
+  function reloadRecord() {
+    drafts.delete(draftKey);
+    onReload();
+  }
+
+  /**
    * Inputs: A result option from the fixed outcome list.
    * Outputs: A keyed outcome choice.
    * Logic: Pass only the explicit form result and selection callback.
-   * Dependencies: ResultButton and the local draft.
+   * Dependencies: ResultChoice and the local draft.
    */
   function renderResult(option: typeof RESULTS[number]) {
-    return <ResultButton key={option.value} option={option} selected={draft.result === option.value} onSelect={handleResultChange} />;
+    return <ResultChoice key={option.value} option={option} selected={draft.result === option.value} onSelect={handleResultChange} />;
   }
 
   return (
@@ -314,10 +340,14 @@ export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendin
         </select></label>}
       {mode === "correction" && <p className="form-note">This adds a correction. Earlier answers stay in your history.</p>}
       <fieldset className="result-fieldset" disabled={editDisabled}>
-        <legend>How did it go?</legend><div className="result-grid">{RESULTS.map(renderResult)}</div>
+        <legend>How did it go?</legend>
+        <p className="result-group-label">Reported AC</p><div className="result-grid">{RESULTS.slice(0, 3).map(renderResult)}</div>
+        <p className="result-group-label">Continue or set aside</p><div className="result-grid">{RESULTS.slice(3).map(renderResult)}</div>
         {mode === "correction" && draft.result !== "" && <button type="button" className="text-button" onClick={clearResult}>Clear reported result</button>}
       </fieldset>
       <fieldset className="entry-fields" disabled={editDisabled}>
+        {(draft.result === "E" || draft.defer_until !== "" || touched.has("defer_until")) && <label className="field schedule-field"><span>Defer until <small>for E</small></span><input type="date" name="defer_until" value={draft.defer_until} onChange={handleFieldChange} /><small>Optional date for deferred practice</small></label>}
+        {(draft.result === "F" || draft.skip_until !== "" || touched.has("skip_until")) && <label className="field schedule-field"><span>Eligible again <small>for F</small></span><input type="date" name="skip_until" value={draft.skip_until} onChange={handleFieldChange} /><small>Optional date for this skipped problem to become eligible again</small></label>}
         <label className="field time-field"><span>Total time <small>minutes</small></span>
           <input type="number" min="0" step="any" inputMode="decimal" name="elapsed_minutes" value={draft.elapsed_minutes} onChange={handleFieldChange} placeholder="Not recorded" />
           <small>Use the total for this attempt, including earlier sessions.</small></label>
@@ -333,16 +363,14 @@ export function FeedbackForm({ item, storeId, workspaceLocked, onSaved, onPendin
               <option value="">Not recorded</option><option value="1">1 · New to me</option><option value="2">2 · Needs support</option><option value="3">3 · Getting familiar</option><option value="4">4 · Comfortable</option><option value="5">5 · Very familiar</option></select></label>
             <label className="field"><span>Time complexity</span><input name="time_complexity" value={draft.time_complexity} onChange={handleFieldChange} maxLength={4000} placeholder="For example, O(n)" /></label>
             <label className="field"><span>Space complexity</span><input name="space_complexity" value={draft.space_complexity} onChange={handleFieldChange} maxLength={4000} placeholder="For example, O(1)" /></label>
-            <label className="field"><span>Defer until <small>for E</small></span><input type="date" name="defer_until" value={draft.defer_until} onChange={handleFieldChange} /></label>
-            <label className="field"><span>Eligible again <small>for F</small></span><input type="date" name="skip_until" value={draft.skip_until} onChange={handleFieldChange} /></label>
           </div>
         </details>
       </fieldset>
       {error && <div className={`message ${error.conflict ? "warning" : "error"}`} role="alert"><strong>{workspaceMismatch ? "This is a different training workspace." : error.conflict ? "This record changed elsewhere." : "Your input is still here."}</strong><p>{error.message}</p>
-        {error.conflict && <button type="button" className="secondary-button" onClick={onReload}>Reload current record</button>}
+        {error.conflict && <button type="button" className="secondary-button" onClick={reloadRecord}>Reload current record</button>}
       </div>}
-      <div className="form-footer"><span className="save-state" aria-live="polite">{workspaceMismatch ? "Workspace changed · save unconfirmed" : sending ? "Saving…" : acknowledged ? "Saved to your record" : pending ? "Awaiting confirmation" : touched.size ? "Unsaved changes" : "Only changed fields will be saved"}</span>
-        {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" onClick={retryPending}>Retry this save</button> : <button type="submit" className="primary-button" disabled={editDisabled || touched.size === 0}>{sending ? "Saving…" : acknowledged ? "Saved" : "Save feedback"}<span aria-hidden="true"> ↗</span></button>}
+      <div className="form-footer"><span className="save-state" aria-live="polite">{workspaceMismatch ? "Workspace changed · save unconfirmed" : sending ? "Saving…" : acknowledged ? "Saved to your record" : pending ? "Awaiting confirmation" : touched.size ? "Unsaved changes · kept in this page" : "Choose a result or add details"}</span>
+        {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" onClick={retryPending}>Retry this save</button> : <button type="submit" className="primary-button" disabled={editDisabled || touched.size === 0}>{sending ? "Saving…" : acknowledged ? "Saved" : "Save feedback"}</button>}
       </div>
       {pending && !sending && !workspaceMismatch && <p className="form-note">Keep this page open. Retry checks the same submission before sending it again.</p>}
     </form>

@@ -18,6 +18,11 @@ npm ci --prefix web
 npm run build --prefix web
 ```
 
+`web/tsconfig.json` is shared by TypeScript, Vite, and editors. Keep this standard
+filename so editors discover the JSX runtime and browser libraries automatically.
+TypeScript accepts the purpose comment in this configuration file.
+If old editor errors remain, restart its TypeScript service or reopen the project.
+
 Set the same private data directory that your Skill uses. Keep it outside this
 checkout. Ask for its path if none is configured. An empty directory without
 `coach.sqlite3` is not an initialized workspace. On `not_initialized`, report the
@@ -167,8 +172,38 @@ same submission ID and exact content. Conflicts require review and reload.
 Requests time out after ten seconds. A timeout leaves the outcome uncertain;
 it does not imply that the database rejected the save.
 
-Drafts live only in the current page. There is no IndexedDB, offline queue, or
-background delivery. Unsaved input is not guaranteed to survive a reload or close.
+Drafts live only in the current page. Switching cards, dates, or views keeps
+unsaved fields in memory. Each draft belongs to one store, attempt, and saved
+revision. A newer saved revision starts a fresh editor. A confirmed save clears
+its draft. Reloading after a conflict discards that revision's stale input.
+There is no IndexedDB, offline queue, or background delivery. Reloading or closing
+the page discards unsaved input. Retained input is not a saved training record.
+
+## Interface design
+
+The panel uses an engineering workbench layout. Neutral gray and white surfaces
+keep the green accent on selected actions, focus, and confirmed saves. The compact
+header leads into the selected training date and saved plan. Working text uses
+14–16px. Metadata uses at least 12px. Primary controls have a 44px minimum height.
+
+The plan is one task list with aligned problem, result, time, and action columns.
+Feedback expands below its task row. Smaller screens stack these fields without
+losing their labels. Thin shared dividers replace separate card outlines.
+
+Native radio controls provide one explicit A–F choice. No result is selected
+for an unanswered attempt. E and F reveal their optional date fields beside the
+main inputs. Existing date values remain visible so they can be cleared explicitly.
+The result guide is a disclosure at every screen size.
+
+Topic rates appear beside their independent and recorded problem counts.
+Figures and evidence use aligned monospace text within one compact table.
+The comparison table becomes labeled rows on mobile. Missing data stays distinct
+from zero. Small samples and stable counts keep their existing meanings.
+
+The design pass follows [unslop](https://github.com/heydamir/unslop) by
+Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+It adapts the spacing, contrast, typography, and interaction guidance to this panel.
 
 ## Topic scores
 

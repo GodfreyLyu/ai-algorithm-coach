@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "build": "tsc --project tsconfig.jsonc --noEmit && vite build && node ../scripts/build_web_manifest.mjs",
-    "typecheck": "tsc --project tsconfig.jsonc --noEmit",
+    "build": "tsc --project tsconfig.json --noEmit && vite build && node ../scripts/build_web_manifest.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
     "check-comments": "node ../scripts/check_frontend_comments.mjs",
     "test:e2e": "node ../scripts/test_web_browser.mjs"
   },
