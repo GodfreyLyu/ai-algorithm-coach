@@ -30,6 +30,11 @@ The application service owns transactions, versions, and idempotency.
 Rules choose candidates and derive learning state.
 Storage owns schema, consistency checks, and backups.
 
+`schema.py` defines the complete current data contract. `storage.py` handles
+connections and transactions. `records.py` reads native practice context, history,
+and checkpoints. The learning rules consume these records without storage-format
+branches. CLI and HTTP adapters call the same application service.
+
 ## Authority and execution
 
 One database is the authority for one local learning workspace.
@@ -87,9 +92,14 @@ Activation advances the global revision; a proposal does not.
 Expiry resolves a prior applicable policy or the unrestricted baseline.
 See [policy semantics](policies.md) for inheritance, fallback, and approval.
 
-Schema version 2 adds policy persistence and catalog import context.
-Version 1 stores require an explicit backed-up migration, not an implicit read-time
-schema change. The schema and version update are transactional.
+Schema version 4 defines the complete current model. Initialization creates this
+schema directly. Opening a different version reports `schema_mismatch` without
+changing the store. The Skill and core do not include format conversion tools.
+
+Native practice context supplies identity and framework metadata. Immutable
+learning checkpoints retain confirmed state with explicit evidence coverage and
+version bindings. Supporting history can exist without an attempt link; it never
+creates an extra completion. Derived state reads these current records only.
 
 ## Feedback transaction
 
@@ -120,5 +130,7 @@ should work without an active model session.
 
 The optional Web server binds only to loopback. There is no browser login,
 remote API, running MCP transport, scheduler, or cloud deployment in this delivery.
-No private prototype is imported.
 Real AI client compatibility and any future deployment require separate checks.
+
+Host-model review persistence does not add a model API client.
+See [code reviews and learning evidence](reviews.md) for the supported workflow.

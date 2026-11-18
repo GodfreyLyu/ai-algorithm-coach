@@ -8,92 +8,11 @@ import sqlite3
 from typing import Iterator
 
 from .errors import CoachError
+from .schema import CURRENT_TABLES, SCHEMA
 
 
 APPLICATION_ID = 0x41414331
-SCHEMA_VERSION = 2
-SCHEMA_V1 = """
-CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE config (
-    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    revision INTEGER NOT NULL, body TEXT NOT NULL
-);
-CREATE TABLE problems (id TEXT PRIMARY KEY, body TEXT NOT NULL);
-CREATE TABLE attempts (
-    id TEXT PRIMARY KEY, problem_id TEXT NOT NULL REFERENCES problems(id),
-    language TEXT NOT NULL, kind TEXT NOT NULL,
-    planned_date TEXT NOT NULL, source_attempt_id TEXT REFERENCES attempts(id),
-    review_id TEXT, created_at TEXT NOT NULL
-);
-CREATE TABLE plans (
-    id TEXT PRIMARY KEY, training_date TEXT NOT NULL UNIQUE,
-    timezone TEXT NOT NULL, config_revision INTEGER NOT NULL,
-    config_snapshot TEXT NOT NULL, state_version INTEGER NOT NULL,
-    catalog_version TEXT NOT NULL, rule_version TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-CREATE TABLE plan_items (
-    plan_id TEXT NOT NULL REFERENCES plans(id), position INTEGER NOT NULL,
-    attempt_id TEXT NOT NULL REFERENCES attempts(id), reason TEXT NOT NULL,
-    PRIMARY KEY(plan_id, position), UNIQUE(plan_id, attempt_id)
-);
-CREATE TABLE feedback (
-    attempt_id TEXT NOT NULL REFERENCES attempts(id), revision INTEGER NOT NULL,
-    submission_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
-    changes TEXT NOT NULL, snapshot TEXT NOT NULL,
-    practice_date TEXT NOT NULL, occurred_at TEXT NOT NULL,
-    received_at TEXT NOT NULL, PRIMARY KEY(attempt_id, revision)
-);
-CREATE TABLE submissions (
-    id TEXT PRIMARY KEY, operation TEXT NOT NULL,
-    payload_hash TEXT NOT NULL, receipt TEXT NOT NULL
-);
-CREATE TABLE learning_state (
-    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    version INTEGER NOT NULL, body TEXT NOT NULL
-);
-CREATE TABLE reviews (
-    id TEXT PRIMARY KEY,
-    source_attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id),
-    problem_id TEXT NOT NULL REFERENCES problems(id), language TEXT NOT NULL,
-    due_date TEXT NOT NULL, status TEXT NOT NULL,
-    attempt_id TEXT UNIQUE REFERENCES attempts(id)
-);
-CREATE INDEX feedback_latest ON feedback(attempt_id, revision DESC);
-CREATE INDEX attempts_problem ON attempts(problem_id, language);
-CREATE TRIGGER feedback_no_update BEFORE UPDATE ON feedback
-BEGIN SELECT RAISE(ABORT, 'Feedback history is immutable'); END;
-CREATE TRIGGER feedback_no_delete BEFORE DELETE ON feedback
-BEGIN SELECT RAISE(ABORT, 'Feedback history is immutable'); END;
-CREATE TRIGGER submissions_no_update BEFORE UPDATE ON submissions
-BEGIN SELECT RAISE(ABORT, 'Submission receipts are immutable'); END;
-CREATE TRIGGER submissions_no_delete BEFORE DELETE ON submissions
-BEGIN SELECT RAISE(ABORT, 'Submission receipts are immutable'); END;
-"""
-POLICY_SCHEMA = """
-CREATE TABLE policy_proposals (
-    id TEXT PRIMARY KEY, body TEXT NOT NULL, content_hash TEXT NOT NULL,
-    base_revision INTEGER NOT NULL, config_revision INTEGER NOT NULL,
-    catalog_version TEXT NOT NULL, created_at TEXT NOT NULL
-);
-CREATE TABLE policies (
-    revision INTEGER PRIMARY KEY,
-    proposal_id TEXT UNIQUE REFERENCES policy_proposals(id),
-    body TEXT NOT NULL, content_hash TEXT NOT NULL, activated_at TEXT NOT NULL
-);
-ALTER TABLE plans ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE plans ADD COLUMN policy_snapshot TEXT NOT NULL DEFAULT '{}';
-ALTER TABLE plans ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}';
-CREATE TRIGGER proposals_no_update BEFORE UPDATE ON policy_proposals
-BEGIN SELECT RAISE(ABORT, 'Policy proposals are immutable'); END;
-CREATE TRIGGER proposals_no_delete BEFORE DELETE ON policy_proposals
-BEGIN SELECT RAISE(ABORT, 'Policy proposals are immutable'); END;
-CREATE TRIGGER policies_no_update BEFORE UPDATE ON policies
-BEGIN SELECT RAISE(ABORT, 'Policy activations are immutable'); END;
-CREATE TRIGGER policies_no_delete BEFORE DELETE ON policies
-BEGIN SELECT RAISE(ABORT, 'Policy activations are immutable'); END;
-"""
-SCHEMA = SCHEMA_V1 + POLICY_SCHEMA
+SCHEMA_VERSION = 4
 
 
 def canonical_json(value: object) -> str:
@@ -124,7 +43,7 @@ def decode_object(value: str, label: str) -> dict:
     return result
 
 
-def connect(path: Path, allow_legacy: bool = False) -> sqlite3.Connection:
+def connect(path: Path) -> sqlite3.Connection:
     """Inputs: an existing database path. Outputs: a configured connection.
 
     Logic: open without implicit transactions and enable integrity settings.
@@ -140,7 +59,7 @@ def connect(path: Path, allow_legacy: bool = False) -> sqlite3.Connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
         connection.execute("PRAGMA synchronous = FULL")
-        check_schema(connection, allow_legacy)
+        check_schema(connection)
         return connection
     except (sqlite3.Error, CoachError) as exc:
         if "connection" in locals():
@@ -150,28 +69,31 @@ def connect(path: Path, allow_legacy: bool = False) -> sqlite3.Connection:
         raise CoachError("storage_error", "The database could not be opened safely.") from exc
 
 
-def check_schema(connection: sqlite3.Connection, allow_legacy: bool = False) -> None:
+def check_schema(connection: sqlite3.Connection) -> None:
     """Inputs: an open connection. Outputs: none, or a domain error.
 
-    Logic: reject unknown applications and unsupported schema versions.
-    Dependencies: SQLite header pragmas and the expected metadata tables.
+    Logic: require the current application, schema, and initialized authority rows.
+    Dependencies: SQLite header pragmas and current schema metadata.
     """
     application = connection.execute("PRAGMA application_id").fetchone()[0]
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if application == APPLICATION_ID and version == 1 and not allow_legacy:
-        raise CoachError("migration_required", "Back up and run the explicit migrate command for schema version 2.")
-    if application != APPLICATION_ID or version not in ((1, SCHEMA_VERSION) if allow_legacy else (SCHEMA_VERSION,)):
-        raise CoachError("unsupported_database", "This file is not a supported coach database.")
+    if application != APPLICATION_ID:
+        raise CoachError("unsupported_database", "This file is not a coach database.")
+    if version != SCHEMA_VERSION:
+        raise CoachError("schema_mismatch", "Use a database prepared for the current schema.",
+                         {"expected_version": SCHEMA_VERSION, "actual_version": version})
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+    missing = CURRENT_TABLES - tables
+    if missing:
+        raise CoachError("unsupported_database", "The coach schema is incomplete.", {"missing_tables": sorted(missing)})
     try:
         config = connection.execute("SELECT revision FROM config WHERE singleton = 1").fetchone()
         state = connection.execute("SELECT version FROM learning_state WHERE singleton = 1").fetchone()
-        if config is None or state is None:
-            raise CoachError("unsupported_database", "The coach initialization is incomplete.")
-        if version == SCHEMA_VERSION:
-            connection.execute("SELECT revision FROM policies WHERE revision = 0").fetchone()
-            connection.execute("SELECT id FROM policy_proposals LIMIT 1").fetchone()
+        baseline = connection.execute("SELECT revision FROM policies WHERE revision = 0").fetchone()
     except sqlite3.Error as exc:
         raise CoachError("unsupported_database", "The coach schema is incomplete.") from exc
+    if config is None or state is None or baseline is None:
+        raise CoachError("unsupported_database", "The coach initialization is incomplete.")
 
 
 def apply_schema(connection: sqlite3.Connection, script: str) -> None:
@@ -217,7 +139,7 @@ def create(path: Path) -> sqlite3.Connection:
         connection.execute("BEGIN IMMEDIATE")
         application = connection.execute("PRAGMA application_id").fetchone()[0]
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if application == APPLICATION_ID and version == SCHEMA_VERSION:
+        if application == APPLICATION_ID:
             check_schema(connection)
             raise CoachError("already_initialized", "Another initializer completed; read the saved configuration.")
         existing = connection.execute("SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").fetchall()

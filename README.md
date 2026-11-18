@@ -27,13 +27,15 @@ Web requirements leave chat feedback available and the saved plan intact.
 - Restrict training with dated, versioned scope policies.
 - Preview a policy before a host-approved activation.
 - Import additional problem metadata without replacing existing entries.
-- Migrate a version 1 workspace explicitly, with a backup.
+- Save version-bound code and host-model complexity reviews without a model API.
+- Read problem history and confirmed learning checkpoints from current records.
 - View existing daily plans and save feedback through the optional local Web panel.
 - Read independent completion rates by topic and language, with sample counts.
 
 The default language is Java. The default daily plan target is five problems.
 Unfinished work uses the same plan capacity. A large backlog can use every slot.
-There is no implemented phase system or guaranteed four-plus-extra quota.
+The default profile has no phase system. The optional `tokyo-interview-v1` profile
+supports four base slots, one normal supplement, and a justified sixth item.
 Language, daily total, timezone, preferred run time, and review rules are configurable.
 Saving a preferred run time does not create a scheduled task.
 Scope policies constrain eligibility. They do not replace the learning rules.
@@ -42,7 +44,7 @@ Scope policies constrain eligibility. They do not replace the learning rules.
 
 - Python 3.12 or later, with `sqlite3` and timezone data.
 - A Skill host that can run local tools and access a private persistent directory.
-- A local disk for the database.
+- A local disk for a new or compatible schema version 4 database.
 
 A text-only chat client cannot guarantee durable feedback.
 The Skill must report that feedback is not saved when it cannot run its tool.
@@ -63,6 +65,8 @@ python3.12 skills/algorithm-coach/scripts/coach.py plan
 An existing empty data directory is not an initialized workspace. If a read returns
 `not_initialized`, confirm the intended path before any new setup. Only initialize
 a new workspace when the user explicitly requests it.
+An incompatible schema returns `schema_mismatch` without changing its data.
+Database conversion belongs to external maintenance, outside the Skill runtime.
 
 `--data-dir` applies to one command. Initialization does not register a global path.
 The export above applies to its shell and child processes. Other terminals or
@@ -212,7 +216,7 @@ Do not store private records inside the bundle.
 | `plan` | Ensure that a plan exists for a training date. |
 | `show` | Read an existing plan. |
 | `feedback` | Append progress or a correction with a submission ID. |
-| `history` | Read the revisions for one attempt. |
+| `history --attempt/--problem` | Read attempt revisions or a problem's practice evidence. |
 | `receipt` | Check one submission. |
 | `state` | Read weak areas and review state. |
 | `config` | Read settings or update them with an expected revision. |
@@ -223,10 +227,11 @@ Do not store private records inside the bundle.
 | `capabilities` | Read the supported local features and limits. |
 | `policy get/history` | Read the effective policy, global version, or revision history. |
 | `policy propose/preview/activate` | Prepare, inspect, and explicitly activate a scope policy. |
-| `migrate` | Upgrade a version 1 database with a pre-migration backup. |
 | `backup` | Write a consistent backup to a new destination. |
 | `check` | Check database integrity and references. |
 | `rebuild-state` | Rebuild derived learning state from stored records. |
+| `review evidence/status/submit` | Save code, inspect pending work, and persist scoped host analysis. |
+| `training-context` | Append researched framework, source, and selection context. |
 
 Use `--help` for the exact options. Commands emit structured JSON.
 No command sends training records to a remote service.
@@ -275,6 +280,7 @@ Chat summaries and future browser caches are views or pending input.
 
 See the [architecture](docs/architecture.md), [data model](docs/data-model.md),
 [policy guide](docs/policies.md), [backup guide](docs/backup-restore.md),
+[code reviews](docs/reviews.md),
 and [local UI contract](docs/future-ui.md).
 
 The optional React TypeScript forms and FastAPI adapter preserve the same attempt
@@ -289,7 +295,8 @@ An operating system or external service must trigger scheduled runs.
 Examples and tests contain synthetic records only.
 The catalog stores problem metadata and official links. It does not include full
 problem statements, paid material, or any user's chat history.
-There is no import from an existing private prototype.
+The runtime handles current-schema records only. Private maintenance tools and
+format conversion scripts do not belong in the Skill bundle.
 
 The code uses the [MIT license](LICENSE).
 Third-party problem names and linked content remain third-party material.

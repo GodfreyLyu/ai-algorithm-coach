@@ -19,7 +19,9 @@ RULE_VERSION = "1"
 FEEDBACK_FIELDS = (
     "result", "elapsed_minutes", "blocked_on", "explanation", "boundary_tests",
     "proficiency", "time_complexity", "space_complexity", "defer_until",
-    "skip_until", "assistance",
+    "skip_until", "assistance", "hint_level", "error_types",
+    "closed_book_minutes", "reading_minutes", "can_explain_invariant",
+    "can_explain_correctness", "can_explain_complexity",
 )
 COMPLETED_RESULTS = {"A", "B", "C"}
 ABILITY_RESULTS = {"A", "B", "C", "D"}
@@ -91,7 +93,7 @@ def default_config() -> dict:
         "language": "Java", "daily_count": 5, "baseline_count": 4,
         "timezone": "UTC", "run_time": None, "review_intervals": [3, 7],
         "assisted_review_days": 1, "stable_review_days": 30,
-        "skip_cooldown_days": 7,
+        "skip_cooldown_days": 7, "training_profile": "standard",
     }
 
 
@@ -112,6 +114,8 @@ def validate_config(config: dict) -> dict:
     if unknown:
         _fail(f"Unsupported configuration fields: {', '.join(sorted(unknown))}.")
     result.update(deepcopy(config))
+    if not isinstance(result["training_profile"], str) or result["training_profile"] not in {"standard", "tokyo-interview-v1"}:
+        _fail("training_profile must be standard or tokyo-interview-v1.")
     language = result["language"]
     if not isinstance(language, str) or not language.strip() or len(language) > 40:
         _fail("language must be a non-empty string of at most 40 characters.")
@@ -183,6 +187,25 @@ def merge_feedback(previous: dict | None, changes: dict, kind: str = "progress")
             if not isinstance(value, str) or len(value) > 4000:
                 _fail(f"{key} must be a string of at most 4000 characters, or null.")
             snapshot[key] = value.strip()
+    for key in ("closed_book_minutes", "reading_minutes"):
+        value = snapshot[key]
+        if value is not None:
+            if type(value) not in (int, float) or value < 0:
+                _fail(f"{key} must be finite non-negative minutes, or null.")
+            try:
+                finite = math.isfinite(value)
+            except OverflowError:
+                finite = False
+            if not finite:
+                _fail(f"{key} must be finite non-negative minutes, or null.")
+    for key in ("can_explain_invariant", "can_explain_correctness", "can_explain_complexity"):
+        if snapshot[key] is not None and type(snapshot[key]) is not bool:
+            _fail(f"{key} must be true, false, or null.")
+    if snapshot["hint_level"] is not None and snapshot["hint_level"] not in ("none", "minor", "key", "solution"):
+        _fail("hint_level must be none, minor, key, solution, or null.")
+    errors = snapshot["error_types"]
+    if errors is not None and (not isinstance(errors, list) or len(errors) > 50 or any(not isinstance(item, str) or not item.strip() or len(item) > 4000 for item in errors)):
+        _fail("error_types must contain at most 50 non-empty labels, or null.")
     explanation = snapshot["explanation"]
     if explanation is not None and (
         not isinstance(explanation, str)
@@ -201,6 +224,12 @@ def merge_feedback(previous: dict | None, changes: dict, kind: str = "progress")
         not isinstance(assistance, str) or assistance not in {"none", "hint", "solution"}
     ):
         _fail("assistance must be none, hint, solution, or null.")
+    hint_assistance = {"none": "none", "minor": "hint", "key": "hint", "solution": "solution"}.get(snapshot["hint_level"])
+    if hint_assistance is not None:
+        if assistance is None:
+            snapshot["assistance"] = assistance = hint_assistance
+        elif assistance != hint_assistance:
+            _fail("The hint level conflicts with reported assistance.")
     required_assistance = {"A": "none", "B": "hint", "C": "solution"}.get(result)
     if required_assistance is not None:
         if "result" in changes and "assistance" not in changes:
@@ -246,9 +275,26 @@ def derive_learning_state(attempts: list[dict], config: dict, catalog: list[dict
     Logic: Count each attempt once. Require spaced independent reports for mastery.
     Dependencies: Catalog tags, date arithmetic, and configured review intervals.
     """
-    settings = validate_config(config)
+    return _derive_state(attempts, validate_config(config), PROBLEMS if catalog is None else catalog)
+
+
+def _derive_state(attempts: list[dict], settings: dict, catalog: list[dict]) -> dict:
+    """Derive state after the public entry validated configuration.
+
+    Inputs: Current attempts, normalized settings, and catalog metadata.
+    Outputs: The configured learning projection.
+    Logic: Share one trusted calculation between planning and direct derivation.
+    Dependencies: Profile rules and standard spacing logic.
+    """
+    if settings["training_profile"] == "tokyo-interview-v1":
+        from .training_profile import derive_profile_state
+
+        return derive_profile_state(attempts, settings, catalog)
+    if any(attempt["learning_checkpoint"]["evidence_coverage"] != "complete"
+           for attempt in attempts if "learning_checkpoint" in attempt):
+        raise CoachError("checkpoint_profile_unsupported", "The standard profile requires complete replay evidence.")
     groups = defaultdict(list)
-    catalog_by_id = {problem["id"]: problem for problem in (PROBLEMS if catalog is None else catalog)}
+    catalog_by_id = {problem["id"]: problem for problem in catalog}
     for attempt in attempts:
         groups[(attempt["problem_id"], attempt["language"])].append(attempt)
     problems = []
@@ -322,6 +368,7 @@ def derive_learning_state(attempts: list[dict], config: dict, catalog: list[dict
 def select_candidates(
     catalog: list[dict], attempts: list[dict], config: dict,
     training_date: str, state: dict | None = None, policy: dict | None = None,
+    selection_context: dict | None = None,
 ) -> list[dict]:
     """Fill a bounded plan with continuation, reviews, and useful new work.
 
@@ -336,7 +383,11 @@ def select_candidates(
     if not policy_active(active_policy, training_date):
         raise CoachError("inactive_policy", "The selected policy does not cover the training date.")
     eligible_catalog = filter_catalog(catalog, active_policy)
-    state = state if state is not None else derive_learning_state(attempts, settings, catalog)
+    state = state if state is not None else _derive_state(attempts, settings, catalog)
+    if settings["training_profile"] == "tokyo-interview-v1":
+        from .training_profile import select_profile_candidates
+
+        return select_profile_candidates(catalog, attempts, settings, training_date, state, active_policy, selection_context)
     language = settings["language"]
     maximum = active_policy["max_daily_count"]
     capacity = min(settings["daily_count"], maximum) if maximum is not None else settings["daily_count"]

@@ -65,6 +65,24 @@ class StopRequest(BaseModel):
     instance_id: Annotated[str, Field(min_length=1, max_length=200)]
 
 
+class SolutionDocument(BaseModel):
+    """Describe user-supplied code without accepting a browser-written verdict."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    code: Annotated[str, Field(min_length=1, max_length=200000)]
+    language: Annotated[str, Field(min_length=1, max_length=40)]
+    input_definition: Annotated[str, Field(max_length=4000)] | None = None
+
+
+class SolutionRequest(BaseModel):
+    """Bind code evidence to one saved feedback revision and retry identity."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    submission_id: Annotated[str, Field(min_length=1, max_length=200)]
+    expected_revision: Annotated[int, Field(ge=0)]
+    document: SolutionDocument
+
+
 def _error(code: str, message: str, status: int, details: object = None) -> JSONResponse:
     """Inputs: safe error fields and an HTTP status. Outputs: a JSON error.
 
@@ -273,6 +291,10 @@ def _execute(data_dir: Path, operation: str, arguments: dict) -> dict:
             return coach.get_topic_scores(arguments.get("language"))
         if operation == "feedback":
             return _submission_data(coach, coach.submit_feedback(**arguments))
+        if operation == "solution":
+            return _submission_data(coach, coach.record_solution(**arguments))
+        if operation == "complexity":
+            return coach.complexity_status(arguments["attempt_id"])
         if operation == "receipt":
             return _submission_data(coach, coach.receipt(arguments["submission_id"]))
         raise CoachError("not_found", "The local operation does not exist.")
@@ -328,7 +350,7 @@ def create_app(data_dir: Path, static_dir: Path | None = None, allowed_origin: s
     async def lifespan(app: FastAPI):
         """Inputs: the app. Outputs: its startup and shutdown context.
 
-        Logic: validate existing storage in one worker without initializing or migrating.
+        Logic: validate the selected current store in one worker.
         Dependencies: _execute and Starlette's thread pool.
         """
         nonlocal startup_identity
@@ -351,7 +373,7 @@ def create_app(data_dir: Path, static_dir: Path | None = None, allowed_origin: s
             return _error("database_busy", "The local database is busy; retry this submission ID.", 503)
         if exc.code == "not_found":
             status = 404
-        elif exc.code in {"revision_conflict", "idempotency_conflict", "config_conflict", "review_conflict", "migration_required", "workspace_mismatch"}:
+        elif exc.code in {"revision_conflict", "idempotency_conflict", "config_conflict", "review_conflict", "schema_mismatch", "workspace_mismatch"}:
             status = 409
         elif exc.code in {"validation_error", "policy_violation", "daily_capacity_exceeded"}:
             status = 422
@@ -444,6 +466,28 @@ def create_app(data_dir: Path, static_dir: Path | None = None, allowed_origin: s
         body = FeedbackRequest.model_validate(request.state.feedback_json)
         arguments = {"attempt_id": attempt_id, "submission_id": body.submission_id, "expected_revision": body.expected_revision, "changes": body.changes.model_dump(exclude_unset=True), "kind": body.kind, "occurred_at": body.occurred_at}
         return {"ok": True, "data": _execute(directory, "feedback", _store_arguments(request, arguments, required=True))}
+
+    @app.get("/v1/attempts/{attempt_id}/complexity")
+    def complexity(attempt_id: str, request: Request) -> dict:
+        """Inputs: an attempt and optional store guard. Outputs: saved review status.
+
+        Logic: Read existing evidence without running a model or generating work.
+        Dependencies: Coach.complexity_status through the shared worker operation.
+        """
+        return {"ok": True, "data": _execute(directory, "complexity", _store_arguments(request, {"attempt_id": attempt_id}))}
+
+    @app.post("/v1/attempts/{attempt_id}/solution")
+    def solution(attempt_id: str, request: Request) -> dict:
+        """Inputs: strict code evidence and revision. Outputs: a committed receipt.
+
+        Logic: Save evidence only; the browser cannot write a model assessment.
+        Dependencies: SolutionRequest, store identity, and Coach.record_solution.
+        """
+        body = SolutionRequest.model_validate(request.state.feedback_json)
+        arguments = {"attempt_id": attempt_id, "submission_id": body.submission_id,
+                     "expected_revision": body.expected_revision,
+                     "document": body.document.model_dump(exclude_unset=True)}
+        return {"ok": True, "data": _execute(directory, "solution", _store_arguments(request, arguments, required=True))}
 
     @app.get("/v1/submissions/{submission_id}")
     def submission(submission_id: str, request: Request) -> dict:

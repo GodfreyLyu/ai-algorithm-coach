@@ -57,7 +57,7 @@ def _changes(value: str) -> dict:
     return parsed
 
 
-def _document(path: str) -> dict:
+def _document(path: str, limit: int = 1_048_576) -> dict:
     """Read a local policy or metadata document.
 
     Inputs: A JSON or TOML file path supplied by the caller.
@@ -66,8 +66,8 @@ def _document(path: str) -> dict:
     Dependencies: pathlib, tomllib, the strict JSON reader, and CoachError.
     """
     source = Path(path).expanduser()
-    if source.stat().st_size > 1_048_576:
-        raise CoachError("validation_error", "Input documents must be at most one MiB.")
+    if source.stat().st_size > limit:
+        raise CoachError("validation_error", f"Input documents must be at most {limit} bytes.")
     try:
         text = source.read_text(encoding="utf-8")
         if source.suffix.lower() == ".toml":
@@ -127,6 +127,7 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--timezone", default="UTC")
     init.add_argument("--daily-count", type=int, default=5)
     init.add_argument("--language", default="Java")
+    init.add_argument("--profile", default="standard", choices=("standard", "tokyo-interview-v1"))
     for command in ("plan", "show"):
         sub = commands.add_parser(command)
         sub.add_argument("--date")
@@ -146,10 +147,13 @@ def _parser() -> argparse.ArgumentParser:
     feedback.add_argument("--kind", choices=("progress", "correction"), default="progress")
     feedback.add_argument("--occurred-at")
     history = commands.add_parser("history")
-    history.add_argument("--attempt", required=True)
+    history_target = history.add_mutually_exclusive_group(required=True)
+    history_target.add_argument("--attempt")
+    history_target.add_argument("--problem")
     receipt = commands.add_parser("receipt")
     receipt.add_argument("--submission", required=True)
-    commands.add_parser("state")
+    state = commands.add_parser("state")
+    state.add_argument("--summary", action="store_true")
     config = commands.add_parser("config")
     config.add_argument("--changes")
     config.add_argument("--expected-revision", type=int)
@@ -168,7 +172,22 @@ def _parser() -> argparse.ArgumentParser:
     catalog_import.add_argument("--submission", required=True)
     catalog_import.add_argument("--expected-hash", help="Require the normalized payload hash from a preview.")
     _policy_commands(commands)
-    commands.add_parser("migrate", help="Explicitly migrate an older local database.")
+    review = commands.add_parser("review", help="Record code or scoped host-model complexity analysis.")
+    review_ops = review.add_subparsers(dest="review_command", required=True)
+    review_status = review_ops.add_parser("status")
+    review_status.add_argument("--attempt")
+    review_status.add_argument("--pending", action="store_true")
+    evidence = review_ops.add_parser("evidence")
+    evidence.add_argument("--attempt", required=True)
+    evidence.add_argument("--expected-revision", type=int, required=True)
+    evidence.add_argument("--submission", required=True)
+    evidence.add_argument("--file", required=True)
+    assessment = review_ops.add_parser("submit")
+    assessment.add_argument("--submission", required=True)
+    assessment.add_argument("--file", required=True)
+    context = commands.add_parser("training-context", help="Save researched framework and selection evidence.")
+    context.add_argument("--submission", required=True)
+    context.add_argument("--file", required=True)
     backup = commands.add_parser("backup")
     backup.add_argument("--output", required=True)
     commands.add_parser("check")
@@ -209,7 +228,7 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
     """
     if args.command == "init":
         return coach.initialize({"timezone": args.timezone, "daily_count": args.daily_count,
-                                 "language": args.language})
+                                 "language": args.language, "training_profile": args.profile})
     if args.command == "plan":
         return coach.ensure_plan(args.date)
     if args.command == "start-session":
@@ -241,11 +260,14 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
             kind=args.kind, occurred_at=args.occurred_at,
         )
     if args.command == "history":
-        return coach.history(args.attempt)
+        return coach.history(args.attempt) if args.attempt else coach.history_for_problem(args.problem)
     if args.command == "receipt":
         return coach.receipt(args.submission)
     if args.command == "state":
-        return coach.learning_state()
+        state = coach.learning_state()
+        if args.summary:
+            state.pop("attempts", None)
+        return state
     if args.command == "config":
         if args.changes is None:
             if args.expected_revision is not None:
@@ -272,8 +294,17 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
         return coach.policy_capabilities()
     if args.command == "policy":
         return _execute_policy(coach, args)
-    if args.command == "migrate":
-        return coach.migrate()
+    if args.command == "review":
+        if args.review_command == "status":
+            result = coach.complexity_status(args.attempt)
+            if args.pending:
+                result["items"] = [item for item in result["items"] if item["status"] in {"pending", "stale"}]
+            return result
+        if args.review_command == "evidence":
+            return coach.record_solution(args.attempt, args.submission, args.expected_revision, _document(args.file))
+        return coach.submit_complexity_review(args.submission, _document(args.file))
+    if args.command == "training-context":
+        return coach.save_training_context(args.submission, _document(args.file))
     if args.command == "backup":
         return coach.backup(Path(args.output).expanduser())
     if args.command == "check":

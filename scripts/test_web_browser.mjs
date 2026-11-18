@@ -155,6 +155,38 @@ async function main() {
     await page.screenshot({ path: path.join(artifacts, "plan-desktop.png"), fullPage: true });
 
     let card = await openCard(page, first);
+    await card.getByText("Code and complexity review", { exact: true }).click();
+    await expect(card.getByText("No code submitted", { exact: true })).toBeVisible();
+    const syntheticCode = "int identity(int n) { return n; }";
+    await card.locator('[name="code"]').fill(syntheticCode);
+    await card.locator('[name="input_definition"]').fill("n is one integer");
+    await card.getByRole("button", { name: `Close ${first.problem.title}`, exact: true }).click();
+    card = await openCard(page, first);
+    await card.getByText("Code and complexity review", { exact: true }).click();
+    await expect(card.locator('[name="code"]')).toHaveValue(syntheticCode);
+    /**
+     * Inputs: The next code evidence response.
+     * Outputs: One durable write with an intentionally lost response.
+     * Logic: Verify that browser retries recover the same code operation.
+     * Dependencies: Playwright routing and the real solution endpoint.
+     */
+    async function loseCodeResponse(route) {
+      await route.fetch();
+      await route.abort("failed");
+    }
+    await page.route("**/v1/attempts/*/solution", loseCodeResponse, { times: 1 });
+    await card.getByRole("button", { name: "Save code for review", exact: true }).click();
+    await expect(card.getByRole("button", { name: "Retry code save", exact: true })).toBeVisible();
+    await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Topic scores", exact: true })).toBeDisabled();
+    await card.getByRole("button", { name: "Retry code save", exact: true }).click();
+    await expect(card.getByText("Code saved · awaiting review", { exact: true })).toBeVisible();
+    const codeStatus = skill(["review", "status", "--attempt", first.attempt_id]);
+    assert.equal(codeStatus.items[0].evidence.body.code, syntheticCode);
+    assert.equal(codeStatus.items[0].feedback_revision, 0);
+    assert.equal(skill(["history", "--attempt", first.attempt_id]).revisions.length, 0);
+    await page.screenshot({ path: path.join(artifacts, "code-review-desktop.png"), fullPage: true });
+    await card.getByText("Code and complexity review", { exact: true }).click();
     await expect(card.getByRole("radio", { checked: true })).toHaveCount(0);
     await card.getByRole("radio", { name: /Independent AC/ }).check();
     await page.keyboard.press("ArrowRight");
@@ -199,6 +231,7 @@ async function main() {
     assert.equal(initialHistory.attempt.feedback.elapsed_minutes, 25);
     assert.equal(initialHistory.attempt.feedback.boundary_tests, false);
     assert.equal(initialHistory.revisions.length, 1);
+    assert.equal(skill(["review", "status", "--attempt", first.attempt_id]).items[0].status, "stale");
     const initialScores = await scores(page, origin, session.web.store_id);
     for (const row of initialScores.topics) {
       if (first.problem.tags.includes(row.tag)) {

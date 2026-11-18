@@ -6,6 +6,11 @@ The Web panel has two views: daily plans with feedback forms, and topic scores.
 React calls FastAPI. FastAPI calls the same Coach service used by the Skill.
 SQLite remains the only learning authority.
 
+The optional code section saves version-bound solution evidence and displays
+pending, reviewed, or stale complexity analysis. It does not launch a model.
+The Skill's host session reviews saved code and writes a scoped conclusion through
+the shared core. See [code reviews and learning evidence](reviews.md).
+
 ## Install and run
 
 Use Python 3.12 or newer and Node.js 24. Run from the repository root.
@@ -38,8 +43,8 @@ python3.12 skills/algorithm-coach/scripts/coach.py plan
 ```
 
 Choose your real timezone during setup. Existing workspaces should skip `init`.
-If a supported old workspace needs migration, use the explicit CLI migration.
-Opening a page never initializes, migrates, or generates a plan.
+The panel requires a compatible current-schema workspace. A schema mismatch
+leaves the store unchanged. Opening a page never initializes or generates a plan.
 
 `--data-dir` selects one command's store. `init` does not save the path globally.
 The export above applies to that shell and its child processes. Another terminal

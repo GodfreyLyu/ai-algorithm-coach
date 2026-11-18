@@ -28,7 +28,12 @@ If it is empty or the tool reports `not_initialized`, report that fact and stop.
 Ask for the existing database directory. Initialize a new workspace only when
 the user explicitly authorizes it at a confirmed path. Import authorization alone
 does not authorize initialization. Do not overwrite an existing store or use
-initialization as migration.
+initialization to replace another store.
+
+The runtime supports schema version 4. Open an existing compatible database or
+initialize an explicitly authorized new workspace. If `schema_mismatch` is
+reported, show the expected and actual versions. Preserve the store and stop the
+storage operation. Database conversion is an external maintenance task.
 
 `--data-dir` selects a path for one command. Initialization does not register it
 globally or set `ALGORITHM_COACH_DATA_DIR`. An exported value applies to that
@@ -46,6 +51,11 @@ If tools or persistence are unavailable, tutoring can continue, but say feedback
 has not been saved. Never invent a receipt or promise later automatic persistence.
 
 ## Daily training
+
+Read `config` first. When `training_profile` is `tokyo-interview-v1`, read
+[the interview workflow](references/interview-profile.md). Its research and
+teaching rules are self-contained. Process saved code review work through the
+host model. Do not call a separate model API. Keep reports and analysis separate.
 
 Run `start-session` when starting or resuming daily interactive training. It
 ensures the plan exists, then starts or reuses the optional local feedback panel.
@@ -79,7 +89,7 @@ Never fill a shortfall with out-of-scope problems.
 Published plans stay frozen. Explain their current policy conflicts when reported.
 
 The core sets capacity and candidate order. Unfinished work occupies daily slots.
-Do not add new problems to satisfy a four-plus-extra preference after the cap is full.
+Do not add problems after the core's shared allocation cap is full.
 Do not mark unselected backlog complete or skipped.
 Repeated planning returns the same published plan.
 
@@ -170,7 +180,7 @@ expansion does not authorize a training scope change or a rewrite of today's pla
 
 Read [policy operations](references/policies.md) when the user changes training
 topics, difficulties, allowed or excluded problems, preferred topics, scope dates,
-daily allocation limits, or catalog metadata. Also read it for legacy migration.
+daily allocation limits, or catalog metadata.
 
 Use proposal, read-only preview, and exact-hash activation as separate operations.
 Use global `latest_revision` for concurrency, not the date-effective revision.
@@ -184,10 +194,13 @@ Never edit stored policy revisions or bypass scope through manual practice.
 Use `config` to read saved settings. Changes need `--changes JSON` and
 `--expected-revision N`. Do not reconfigure the user each day.
 Use `catalog` for problem metadata and official links.
-Use `migrate` only as the explicit schema version 1 upgrade with a backup.
 Use `backup --output NEW_PATH` for a consistent backup.
 Use `check` for integrity and `rebuild-state` to rebuild derived state when requested.
 Backups and records are private. Do not export them for a public example.
+Use `history --problem ID` for the problem's practice history and supporting
+evidence. Evidence without an attempt link does not add another practice count.
+The interview profile uses learning checkpoints with explicit coverage and version
+bindings. Report reconciliation needs rather than inventing a complete history.
 
 The optional feedback panel runs only on the local computer. A Web bundle needs
 its optional Python dependencies installed once. Remote access, a running MCP
