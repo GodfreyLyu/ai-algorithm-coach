@@ -2,7 +2,7 @@
 
 # Data model
 
-This is the logical model. The schema implementation is in the storage module.
+This is the logical model. The complete schema is defined in the schema module.
 Read it together with [feedback semantics](feedback-semantics.md).
 
 ## Saved configuration
@@ -21,9 +21,10 @@ Updates use a partial changes object and the expected revision.
 | `assisted_review_days` | `1` | Review delay after B or C. |
 | `stable_review_days` | `30` | Maintenance review delay after stable evidence. |
 | `skip_cooldown_days` | `7` | Default eligibility delay after a skipped attempt. |
+| `training_profile` | `standard` | Standard rules or the opt-in interview profile. |
 
 Changing saved configuration does not rewrite a published plan.
-No phase quota system is implemented. A policy `max_daily_count` is the optional
+The standard profile has no phase quota system. A policy `max_daily_count` is the optional
 shared hard cap for manual and planned allocations. Without it, manual practice
 is not implicitly capped by `daily_count`.
 
@@ -37,7 +38,12 @@ is not implicitly capped by `daily_count`.
 | Plan item | A position, problem, attempt reference, and selection reason. |
 | Practice attempt | One unit of practice, with its language and practice context. |
 | Feedback revision | An immutable progress or correction record for an attempt. |
-| Learning state | Rebuildable problem and topic evidence derived from attempts. |
+| Learning state | Rebuildable problem and topic evidence derived from current records. |
+| Learning checkpoint | Confirmed state with covered versions, rule context, and evidence coverage. |
+| History evidence | Supporting records with an optional attempt link. |
+| Solution evidence | Immutable code bound to one feedback revision. |
+| Complexity review | Scoped host analysis of one solution version. |
+| Training context | Native practice identity and researched framework or selection context. |
 | Review | A due practice need linked to its evidence and execution attempt. |
 | Submission receipt | A permanent operation ID, content identity, and committed result. |
 | Policy proposal | An immutable normalized policy body, content hash, and base versions. |
@@ -77,13 +83,20 @@ Plans retain their policy snapshot. Current policy comparisons are diagnostics,
 not changes to the stored assignment. Paused attempts and reviews retain identity
 and feedback. They can become eligible again without reconstructing lost history.
 
-## Schema migration
+## Current schema
 
-Schema version 2 stores policy history and imported metadata context.
-Opening a version 1 store does not silently migrate it.
-The explicit migration creates a consistent backup first, then changes schema and
-version in one transaction. Failure rolls back the schema changes.
-Practice IDs, plan history, feedback revisions, and receipts are preserved.
+Schema version 4 is the runtime contract. New workspaces create it directly.
+Compatible existing workspaces use the same model. A different version returns a
+schema mismatch without rewriting data. External maintenance must prepare a
+compatible store before the Skill can use it.
+
+A learning checkpoint is independent of the derived `learning_state` projection.
+It records confirmed state, covered feedback and assessment versions, the rule
+version, and evidence coverage. The interview profile continues from compatible
+checkpoints after checking the rule version. The standard profile uses full
+attempt evidence and reports `checkpoint_profile_unsupported` for a partial
+checkpoint. Complete evidence permits a full replay. Older corrections require
+reconciliation. The core must not invent evidence or retain an unsupported streak.
 
 ## Original and derived records
 
@@ -93,15 +106,16 @@ It must not count an erroneous superseded claim as another practice attempt.
 Rule and configuration context must be explicit when rebuilding state.
 
 Self-reported complexity and result claims are unverified data.
-There is no automatic correctness-verification channel in the local MVP.
-Future assessments need separate source, method, scope, and evidence records.
+Host-model assessments use separate immutable source, method, scope, and code
+evidence records. They do not change self-reports into online-judge verification.
+See [code reviews and learning evidence](reviews.md).
 
 Topic scores are read-only projections, not another learning authority.
 For one language, use each problem's latest valid effective A-D attempt result.
 Each topic reports its independent A percentage, sample size, result counts,
 and existing stable-mastery count. No samples means no score. See the
 [score definition](web.md#topic-scores). The UI score does not change mastery
-or selection rules and needs no schema migration.
+or selection rules and needs no additional persistence tables.
 
 ## Storage boundary
 
@@ -110,7 +124,7 @@ The catalog shipped with the code contains public metadata only.
 No chat summary, Markdown ledger, browser cache, or second database can replace
 the saved feedback history.
 
-An eventual move to a remote authority needs an explicit migration and cutover.
+An eventual move to a remote authority needs a separate data cutover.
 An unavailable remote service must not silently cause a second local authority.
 
 Catalog discovery adds no schema or problem fields. Candidate files keep the

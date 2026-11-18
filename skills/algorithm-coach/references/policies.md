@@ -106,9 +106,7 @@ Imports append metadata. They cannot change an existing problem identity.
 Import does not activate a policy or force new problems into a frozen plan.
 Use the policy proposal, preview, and exact approval steps above for scope changes.
 
-If the tool reports schema version 1, use the explicit `migrate` operation.
-It automatically creates and verifies a private consistent backup before changing
-schema. Check the returned backup path. The manual `backup` command remains
-available too. Failed migration rolls back schema changes and preserves history.
-Do not erase the workspace, initialize a second one, or silently migrate in an
-ordinary read or feedback command.
+If the tool reports `schema_mismatch`, show the expected and actual versions.
+Preserve the workspace. A compatible store must be prepared through external
+maintenance before these commands can run. Do not erase data or initialize a
+second workspace to bypass a schema error.

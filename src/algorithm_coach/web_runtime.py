@@ -50,7 +50,7 @@ def _directory(data_dir: Path) -> Path:
     """Inputs: a configured private data directory.
     Outputs: its canonical existing absolute location.
 
-    Logic: reject relative paths without initializing or migrating storage.
+    Logic: reject relative paths and leave setup to explicit initialization.
     Dependencies: pathlib and CoachError.
     """
     path = Path(data_dir).expanduser()

@@ -4,8 +4,8 @@
 
 Backups contain private feedback history. Store them outside the repository.
 Use a local disk and restrict access to the operating system owner.
-Schema version 2 backups also contain policy proposals, activated policy history,
-approval hashes, and imported catalog metadata.
+Current backups contain configuration, policies, catalog metadata, practice
+history, code reviews, and learning checkpoints.
 
 ## Back up
 
@@ -29,7 +29,7 @@ Restore into a new private directory. Do not overwrite a live database.
 Place the restored copy at `NEW_DATA_DIRECTORY/coach.sqlite3`.
 
 Point `--data-dir` at that isolated directory and run `check`.
-Read a known synthetic submission receipt and its attempt history.
+Read a known submission receipt and its attempt history.
 Run `rebuild-state`, then compare its learning evidence with the source.
 Generate the same next-date plan in isolated copies under the same configuration
 and rules. The selected problems and reasons should match.
@@ -38,24 +38,16 @@ Do not compare newly generated opaque IDs between copies.
 Compare stable business evidence, selected problems, and due dates instead.
 Only switch the configured live path after those checks pass.
 
-## Migrate a version 1 workspace
+## Compatible storage
 
-Use the explicit `migrate` command against the configured private data directory.
-Ordinary commands do not silently upgrade a legacy database.
-Migration creates a consistent version 1 backup before changing schema.
-This automatic backup is private and verified before the upgrade proceeds.
-Keep it outside the repository and note the returned `backup_path`.
-The explicit manual `backup` command remains available before or after migration.
+Backup and recovery use the current schema. A different version produces
+`schema_mismatch` and leaves the source unchanged. Schema conversion is external
+maintenance; the Skill has no conversion command. Do not erase an incompatible
+workspace or initialize another one as a recovery shortcut.
 
-The migration adds schema version 2 records and the unrestricted policy baseline.
-It preserves existing attempts, plans, feedback revisions, and receipts.
-Schema changes and the schema-version update run in one transaction.
-If migration fails, those changes roll back. Do not delete and reinitialize the
-workspace as a recovery shortcut.
-
-After migration, run `check`, read an existing synthetic receipt, and read the
-history and effective policy. The legacy training data must still match.
-Repeat migration should report that no upgrade is needed, not recreate history.
+Before switching a prepared compatible store into use, verify its backup and
+integrity, known history, learning decisions, and frozen plan membership. Keep
+all maintenance artifacts in a private directory outside this repository.
 
 ## Failure cases
 

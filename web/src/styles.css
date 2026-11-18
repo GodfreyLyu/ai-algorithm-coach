@@ -103,6 +103,9 @@ h1 { font-size: 28px; line-height: 1.25; font-weight: 500; }
 .result-guide dd { margin: 0; color: var(--secondary); font-size: 13px; }
 .guide-content .guide-footnote { border-top: 1px solid var(--line); padding-top: 16px; font-size: 12px; }
 .feedback-form { border-top: 1px solid var(--line); padding: 24px 56px; background: #fafbfc; }
+.solution-details > summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--secondary); font-size: 14px; }
+.solution-form textarea[name="code"] { font-family: var(--mono); font-size: 14px; tab-size: 4; }
+.solution-form .saved-summary { padding-bottom: 0; }
 .saved-summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; color: var(--secondary); font-size: 12px; padding-bottom: 16px; }
 .tiny-label { color: var(--muted); font-family: var(--mono); }
 .mode-field { margin-bottom: 24px; max-width: 360px; }
@@ -230,6 +233,7 @@ fieldset:disabled .result-choice { cursor: default; opacity: .65; }
   h1 { font-size: 24px; }
   .date-control { width: 100%; }
   .date-control input, .field input, .field select, .field textarea { font-size: 16px; }
+  .solution-form textarea[name="code"] { font-size: 16px; }
   .problem-header { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .problem-status { min-width: 0; font-size: 12px; }
   .problem-time { font-size: 12px; }

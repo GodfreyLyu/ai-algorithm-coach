@@ -102,3 +102,43 @@ export interface Scores {
   state_version: number;
   topics: Topic[];
 }
+
+export interface SolutionDocument {
+  code: string;
+  language: string;
+  input_definition?: string | null;
+}
+
+export interface SolutionRequest {
+  submission_id: string;
+  expected_revision: number;
+  document: SolutionDocument;
+}
+
+export interface SolutionReceipt {
+  status: string;
+  submission_id: string;
+  attempt_id: string;
+  operation: string;
+  feedback_revision?: number;
+  revision?: number;
+  evidence_id: string;
+  code_hash: string;
+  payload_hash: string;
+}
+
+export interface SavedSolution {
+  receipt: SolutionReceipt;
+}
+
+export interface ComplexityItem {
+  attempt_id: string;
+  feedback_revision: number;
+  status: "awaiting_code" | "pending" | "supported" | "issues" | "insufficient_information" | "stale";
+  evidence: Record<string, unknown> | null;
+  review: Record<string, unknown> | null;
+}
+
+export interface ComplexityStatus {
+  items: ComplexityItem[];
+}

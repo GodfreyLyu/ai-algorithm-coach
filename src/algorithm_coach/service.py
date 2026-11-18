@@ -9,9 +9,11 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .catalog import CATALOG_VERSION, PROBLEMS
+from .complexity import ComplexityMixin
 from .errors import CoachError
 from .policies import eligibility, validate_plan_candidates
 from .policy_store import PolicyMixin
+from .records import PracticeRecordsMixin
 from .rules import default_config, derive_learning_state, merge_feedback, validate_config
 from .scoring import derive_topic_scores
 from . import storage
@@ -71,7 +73,7 @@ def _timestamp(value: object) -> str:
     return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
-class Coach(PolicyMixin):
+class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
     """Own one local database and expose framework-independent use cases."""
 
     def __init__(self, db_path: Path) -> None:
@@ -246,41 +248,6 @@ class Coach(PolicyMixin):
             raise CoachError("integrity_error", "Stored learning state has an invalid shape.")
         return {**state, "state_version": row["version"]}
 
-    def _attempts(self) -> list[dict]:
-        """Inputs: none. Outputs: attempts with their latest effective feedback.
-
-        Logic: join each attempt to one latest revision without counting history twice.
-        Dependencies: attempts and immutable feedback tables.
-        """
-        rows = self._db().execute(
-            "SELECT a.*, f.revision, f.snapshot, f.practice_date, f.occurred_at, f.received_at "
-            "FROM attempts a LEFT JOIN feedback f ON f.attempt_id = a.id AND f.revision = "
-            "(SELECT MAX(x.revision) FROM feedback x WHERE x.attempt_id = a.id) "
-            "ORDER BY a.created_at, a.id"
-        ).fetchall()
-        result = []
-        for row in rows:
-            item = dict(row)
-            snapshot = item.pop("snapshot")
-            item["feedback"] = storage.decode_object(snapshot, "feedback") if snapshot is not None else None
-            item["revision"] = item["revision"] or 0
-            item["created_on"] = item["planned_date"]
-            item["practice_date"] = item["practice_date"] or item["planned_date"]
-            result.append(item)
-        return result
-
-    def _attempt(self, attempt_id: str) -> dict:
-        """Inputs: an attempt identifier. Outputs: the current attempt record.
-
-        Logic: find an attempt and reject unknown targets.
-        Dependencies: the current attempt projection.
-        """
-        _identifier(attempt_id, "Attempt ID")
-        for attempt in self._attempts():
-            if attempt["id"] == attempt_id:
-                return attempt
-        raise CoachError("not_found", "The practice attempt does not exist.")
-
     def list_problems(self) -> dict:
         """Inputs: none. Outputs: stored public problem metadata.
 
@@ -357,7 +324,15 @@ class Coach(PolicyMixin):
                         else:
                             attempt_id = self._new_attempt(candidate["problem_id"], config["config"]["language"], local_date, "review" if source else "practice", source, review["id"] if review else None)
                     connection.execute("INSERT INTO plan_items VALUES (?, ?, ?, ?)", (plan_id, position, attempt_id, candidate["reason"]))
-                maximum = policy["policy"]["max_daily_count"]
+                    context = candidate.get("training_context")
+                    if config["config"].get("training_profile") == "tokyo-interview-v1":
+                        context = {key: value for key, value in candidate.items()
+                                   if key not in {"problem_id", "attempt_id", "review_source_attempt_id"}}
+                        context.setdefault("original_recommendation_date", local_date)
+                    if context:
+                        connection.execute("INSERT INTO training_contexts(problem_id, attempt_id, body, created_at) VALUES (?, ?, ?, ?)",
+                                           (candidate["problem_id"], attempt_id, storage.canonical_json(context), _now()))
+                maximum = self._daily_maximum(policy["policy"])
                 if maximum is not None and len(self._reserved_attempt_ids(local_date)) > maximum:
                     raise CoachError("policy_violation", "Publishing this plan would exceed reserved daily capacity.")
         return {**self.get_plan(local_date), "created": created}
@@ -473,22 +448,6 @@ class Coach(PolicyMixin):
             raise CoachError("not_found", "No committed receipt exists for this submission.")
         return storage.decode_object(row[0], "submission receipt")
 
-    def history(self, attempt_id: str) -> dict:
-        """Inputs: an attempt ID. Outputs: current practice data and immutable history.
-
-        Logic: return each revision with its own event and receive timestamps.
-        Dependencies: attempts and feedback tables.
-        """
-        attempt = self._attempt(attempt_id)
-        rows = self._db().execute("SELECT * FROM feedback WHERE attempt_id = ? ORDER BY revision", (attempt_id,)).fetchall()
-        revisions = []
-        for row in rows:
-            item = dict(row)
-            item["changes"] = storage.decode_object(item["changes"], "feedback changes")
-            item["snapshot"] = storage.decode_object(item["snapshot"], "feedback snapshot")
-            revisions.append(item)
-        return {"attempt": attempt, "revisions": revisions}
-
     def _refresh_state(self) -> dict:
         """Inputs: none. Outputs: the new learning state and version.
 
@@ -551,10 +510,6 @@ class Coach(PolicyMixin):
         _identifier(submission_id, "Submission ID")
         if review_id is not None:
             _identifier(review_id, "Review ID")
-        if language is not None:
-            _identifier(language, "Language")
-        if training_date is not None:
-            _iso_date(training_date)
         payload_hash = self._hash({"operation": "start_practice", "problem_id": problem_id, "language": language, "review_id": review_id, "training_date": training_date})
         connection = self._db()
         with storage.transaction(connection):
@@ -572,11 +527,25 @@ class Coach(PolicyMixin):
             check = eligibility(problem, policy["policy"])
             if not check["allowed"]:
                 raise CoachError("policy_violation", "The current policy excludes this practice.", {"problem_id": problem_id, "reasons": check["reasons"]})
-            maximum = policy["policy"]["max_daily_count"]
+            maximum = self._daily_maximum(policy["policy"])
             if maximum is not None:
                 reserved = self._reserved_attempt_ids(selected_date)
                 if len(reserved) >= maximum:
                     raise CoachError("daily_capacity_exceeded", "The policy's daily practice capacity is already reserved.", {"reserved_count": len(reserved), "limit": maximum})
+            profile_context = None
+            if config.get("training_profile") == "tokyo-interview-v1":
+                from .training_profile import primary_framework, validate_score, verified_sources
+
+                profile_context = self._selection_context(selected_date)["candidates"].get(problem_id, {})
+                frame = primary_framework(problem, context=profile_context)
+                if frame is None or not verified_sources(profile_context) or validate_score(profile_context.get("score")) is None:
+                    raise CoachError("training_evidence_required", "Manual practice needs researched source, score, and framework context.")
+                all_attempts = {item["id"]: item for item in self._attempts()}
+                for reserved_id in self._reserved_attempt_ids(selected_date):
+                    reserved_attempt = all_attempts[reserved_id]
+                    reserved_problem = next(item for item in self.list_problems()["problems"] if item["id"] == reserved_attempt["problem_id"])
+                    if reserved_attempt["problem_id"] == problem_id or primary_framework(reserved_problem, reserved_attempt) == frame:
+                        raise CoachError("daily_framework_conflict", "This problem or primary framework is already allocated today.")
             source = None
             if review_id is not None:
                 review = connection.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
@@ -586,6 +555,16 @@ class Coach(PolicyMixin):
                     raise CoachError("review_conflict", "The review has already been claimed or closed.")
                 source = review["source_attempt_id"]
             attempt_id = self._new_attempt(problem_id, selected_language, selected_date, "review" if source else "redo", source, review_id)
+            if profile_context is not None:
+                from .training_profile import timebox
+
+                practiced = any(item["problem_id"] == problem_id and item["id"] != attempt_id and item.get("feedback")
+                                for item in self._attempts())
+                identity = "retest" if source or practiced else "new"
+                context = {**profile_context, "training_identity": identity, "original_recommendation_date": selected_date,
+                           "timebox": timebox(identity)}
+                connection.execute("INSERT INTO training_contexts(problem_id, attempt_id, body, created_at) VALUES (?, ?, ?, ?)",
+                                   (problem_id, attempt_id, storage.canonical_json(context), _now()))
             receipt = {"submission_id": submission_id, "operation": "start_practice", "attempt_id": attempt_id, "revision": 0, "payload_hash": payload_hash, "state_version": self._state()["state_version"], "status": "applied", "saved_at": _now()}
             connection.execute("INSERT INTO submissions VALUES (?, ?, ?, ?)", (submission_id, "start_practice", payload_hash, storage.canonical_json(receipt)))
         return self.receipt(submission_id)
@@ -599,41 +578,6 @@ class Coach(PolicyMixin):
         with storage.transaction(self._db()):
             self._refresh_state()
         return self.learning_state()
-
-    def migrate(self) -> dict:
-        """Inputs: none. Outputs: migration status and an automatic backup path.
-
-        Logic: verify a private backup, then add policy schema atomically and explicitly.
-        Dependencies: supported v1 metadata, SQLite DDL transactions, and backup checks.
-        """
-        self.close()
-        connection = storage.connect(self.path, allow_legacy=True)
-        version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == storage.SCHEMA_VERSION:
-            self._connection = connection
-            return {"migrated": False, "from_version": version, "schema_version": version}
-        connection.close()
-        destination = self.path.with_name(self.path.name + ".before-v2-" + uuid4().hex + ".sqlite3")
-        self.backup(destination)
-        self._connection = storage.connect(self.path, allow_legacy=True)
-        connection = self._connection
-        try:
-            with storage.transaction(connection):
-                current = connection.execute("PRAGMA user_version").fetchone()[0]
-                if current == storage.SCHEMA_VERSION:
-                    return {"migrated": False, "from_version": current, "schema_version": current, "backup_path": str(destination)}
-                if current != 1:
-                    raise CoachError("unsupported_database", "No migration is defined for this schema version.")
-                storage.apply_schema(connection, storage.POLICY_SCHEMA)
-                self._seed_policy()
-                baseline = self.get_policy("0001-01-01")["policy"]
-                connection.execute("UPDATE plans SET policy_revision = 0, policy_snapshot = ?, diagnostics = ?", (storage.canonical_json(baseline), storage.canonical_json({"migrated_from_schema": 1})))
-                connection.execute(f"PRAGMA user_version = {storage.SCHEMA_VERSION}")
-            storage.check_schema(connection)
-        except BaseException:
-            self.close()
-            raise
-        return {"migrated": True, "from_version": version, "schema_version": storage.SCHEMA_VERSION, "backup_path": str(destination)}
 
     def integrity_check(self) -> dict:
         """Inputs: none. Outputs: database, schema, and foreign-key check results.
@@ -666,20 +610,11 @@ class Coach(PolicyMixin):
         destination = Path(destination).expanduser()
         if destination.exists() or destination.is_symlink():
             raise CoachError("already_exists", "The backup destination already exists.")
-        temporary_source = False
-        try:
-            source = self._db()
-        except CoachError as exc:
-            if exc.code != "migration_required":
-                raise
-            source = storage.connect(self.path, allow_legacy=True)
-            temporary_source = True
+        source = self._db()
         version = source.execute("PRAGMA user_version").fetchone()[0]
         physical = [row[0] for row in source.execute("PRAGMA integrity_check")]
         foreign = list(source.execute("PRAGMA foreign_key_check"))
         if physical != ["ok"] or foreign:
-            if temporary_source:
-                source.close()
             raise CoachError("integrity_error", "The source database failed backup checks.")
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -687,7 +622,7 @@ class Coach(PolicyMixin):
         target = sqlite3.connect(str(destination), isolation_level=None)
         try:
             source.backup(target)
-            storage.check_schema(target, allow_legacy=True)
+            storage.check_schema(target)
             integrity = [row[0] for row in target.execute("PRAGMA integrity_check")]
             foreign_keys = list(target.execute("PRAGMA foreign_key_check"))
             if integrity != ["ok"] or foreign_keys:
@@ -695,13 +630,9 @@ class Coach(PolicyMixin):
         except BaseException:
             target.close()
             destination.unlink(missing_ok=True)
-            if temporary_source:
-                source.close()
             raise
         target.close()
         state_version = source.execute("SELECT version FROM learning_state WHERE singleton = 1").fetchone()[0]
-        if temporary_source:
-            source.close()
         return {"status": "verified", "schema_version": version, "state_version": state_version}
 
     def get_topic_scores(self, language: str | None = None) -> dict:

@@ -214,10 +214,11 @@ class PolicyMixin:
         """
         config = self.get_config()["config"]
         catalog = self.list_problems()["problems"]
-        candidates = select_candidates(catalog, self._attempts(), config, training_date, self._state(), body)
+        candidates = select_candidates(catalog, self._attempts(), config, training_date, self._state(), body,
+                                       selection_context=self._selection_context(training_date))
         validate_plan_candidates(candidates, catalog, body, config)
         reserved = self._reserved_attempt_ids(training_date)
-        maximum = body["max_daily_count"]
+        maximum = self._daily_maximum(body)
         remaining = max(0, maximum - len(reserved)) if maximum is not None else None
         selected = []
         capacity_limited = 0
@@ -230,9 +231,21 @@ class PolicyMixin:
             if remaining is not None:
                 remaining -= cost
         validate_plan_candidates(selected, catalog, body, config)
-        target = min(config["daily_count"], body["max_daily_count"] or config["daily_count"])
+        profile_target = 5 if config.get("training_profile") == "tokyo-interview-v1" else config["daily_count"]
+        target = min(profile_target, maximum or profile_target)
         paused = self._paused_by_policy(body, training_date)
         return {"eligible_count": len(filter_catalog(catalog, body)), "selected": selected, "selected_count": len(selected), "target_count": target, "shortfall": max(0, target - len(selected)), "reserved_count": len(reserved), "remaining_capacity": remaining, "capacity_limited_count": capacity_limited, "paused_backlog": paused["backlog"], "paused_reviews": paused["reviews"]}
+
+    def _daily_maximum(self, body: dict) -> int | None:
+        """Inputs: an effective scope policy. Outputs: the shared allocation cap.
+
+        Logic: combine the profile's six-slot ceiling with any stricter scope cap.
+        Dependencies: saved configuration. Standard scope semantics stay independent.
+        """
+        maximum = body["max_daily_count"]
+        if self.get_config()["config"].get("training_profile") == "tokyo-interview-v1":
+            maximum = min(6, maximum) if maximum is not None else 6
+        return maximum
 
     def preview_policy(self, proposal_id: str, training_date: str | None = None) -> dict:
         """Inputs: a proposal ID and optional date. Outputs: preview, diff, and staleness.

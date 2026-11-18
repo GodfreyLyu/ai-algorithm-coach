@@ -1,7 +1,7 @@
 /** File purpose: Edit one practice record with explicit modes and retry-safe saves. */
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { ApiError, errorMessage, request } from "./api";
-import type { Feedback, FeedbackRequest, PlanItem, Receipt, Result, SavedFeedback } from "./types";
+import type { ComplexityItem, ComplexityStatus, Feedback, FeedbackRequest, PlanItem, Receipt, Result, SavedFeedback, SavedSolution, SolutionDocument, SolutionRequest } from "./types";
 
 type Field = Exclude<keyof Feedback, "assistance">;
 type Draft = Record<Field, string>;
@@ -11,6 +11,7 @@ export interface EditorDraft {
   values: Draft;
   touched: Set<Field>;
   mode: Mode;
+  solution?: SolutionDocument;
 }
 
 const RESULTS: { value: Result; label: string; detail: string }[] = [
@@ -120,6 +121,223 @@ function ResultChoice({ option, selected, onSelect }: {
   );
 }
 
+const REVIEW_LABELS = {
+  awaiting_code: "No code submitted",
+  pending: "Code saved · awaiting review",
+  supported: "Analysis supports this version",
+  issues: "Review found an issue",
+  insufficient_information: "More information needed",
+  stale: "Review belongs to an earlier feedback version",
+};
+
+/**
+ * Inputs: A saved review status and one conclusion field.
+ * Outputs: The saved text when the field is present.
+ * Logic: Read only known text fields from the structured review body.
+ * Dependencies: The complexity status contract.
+ */
+function conclusion(item: ComplexityItem | null, field: string): string | null {
+  const body = item?.review?.body;
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Inputs: One attempt, its store, retained drafts, and shared lock callbacks.
+ * Outputs: A code evidence form and the latest scoped review.
+ * Logic: Save code without calling a model and retain uncertain submissions for retry.
+ * Dependencies: React, the solution API, and immutable submission receipts.
+ */
+function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onReload, onWorkspaceMismatch }: {
+  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; disabled: boolean;
+  onPendingChange: (id: string | null) => void; onReload: () => void; onWorkspaceMismatch: () => void;
+}) {
+  const draftKey = `${storeId}:${item.attempt_id}:solution`;
+  const retained = drafts.get(draftKey)?.solution;
+  const [document, setDocument] = useState<SolutionDocument>(retained ?? { code: "", language: item.attempt.language });
+  const [dirty, setDirty] = useState(retained !== undefined);
+  const [status, setStatus] = useState<ComplexityItem | null>(null);
+  const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<SolutionRequest | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [workspaceMismatch, setWorkspaceMismatch] = useState(false);
+  const locked = disabled || sending || pending !== null || conflict || workspaceMismatch;
+
+  /**
+   * Inputs: Mount or a changed attempt revision.
+   * Outputs: The latest status and a cancellation handler.
+   * Logic: Read only the bound attempt and ignore a response after unmount.
+   * Dependencies: AbortController, the status endpoint, and current identity.
+   */
+  function loadReview() {
+    const controller = new AbortController();
+    /**
+     * Inputs: None.
+     * Outputs: A saved status or a visible read error.
+     * Logic: Keep an unavailable review distinct from an unreviewed solution.
+     * Dependencies: The bound request and effect cancellation signal.
+     */
+    async function readReview() {
+      try {
+        const data = await request<ComplexityStatus>(`/v1/attempts/${encodeURIComponent(item.attempt_id)}/complexity`, { headers: { "X-Coach-Store-Id": storeId }, signal: controller.signal });
+        if (!controller.signal.aborted) setStatus(data.items[0] ?? null);
+      } catch (failure) {
+        if (!controller.signal.aborted) {
+          setError(errorMessage(failure));
+          if (failure instanceof ApiError && failure.code === "workspace_mismatch") {
+            setWorkspaceMismatch(true);
+            onWorkspaceMismatch();
+          }
+        }
+      }
+    }
+    void readReview();
+    /**
+     * Inputs: Effect cleanup.
+     * Outputs: Cancellation of an obsolete read.
+     * Logic: Prevent late results from changing a different editor.
+     * Dependencies: This effect's controller.
+     */
+    function cancelRead() { controller.abort(); }
+    return cancelRead;
+  }
+  useEffect(loadReview, [item, storeId]);
+
+  /**
+   * Inputs: A changed code or input-size field.
+   * Outputs: A retained in-page code draft.
+   * Logic: Preserve exact source code without writing it until the user submits.
+   * Dependencies: Controlled document state and the store-bound draft map.
+   */
+  function changeDocument(event: ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) {
+    const next = { ...document, [event.currentTarget.name]: event.currentTarget.value };
+    setDocument(next);
+    setDirty(true);
+    drafts.set(draftKey, { values: makeDraft(null), touched: new Set(), mode: "", solution: next });
+    setError(null);
+  }
+
+  /**
+   * Inputs: A core receipt and the exact request being acknowledged.
+   * Outputs: A confirmed code save and released navigation lock.
+   * Logic: Match code identity, attempt, and feedback version before showing saved.
+   * Dependencies: Immutable receipt fields and the retained operation.
+   */
+  async function acceptSolution(saved: SavedSolution, original: SolutionRequest) {
+    const receipt = saved.receipt;
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(original.document.code));
+    let expectedHash = "";
+    for (const byte of new Uint8Array(digest)) expectedHash += byte.toString(16).padStart(2, "0");
+    if (receipt.status !== "applied" || receipt.operation !== "record_solution" ||
+        receipt.submission_id !== original.submission_id || receipt.attempt_id !== item.attempt_id ||
+        receipt.feedback_revision !== original.expected_revision || !receipt.evidence_id || receipt.code_hash !== expectedHash || !receipt.payload_hash) {
+      throw new Error("The code save receipt could not be matched.");
+    }
+    setPending(null);
+    setDirty(false);
+    setError(null);
+    drafts.delete(draftKey);
+    onPendingChange(null);
+    setStatus({ attempt_id: item.attempt_id, feedback_revision: original.expected_revision, status: "pending", evidence: { id: receipt.evidence_id, code_hash: receipt.code_hash }, review: null });
+  }
+
+  /**
+   * Inputs: A failed write or receipt lookup.
+   * Outputs: A visible error and the appropriate retry or reload state.
+   * Logic: Keep uncertain writes pending and never switch their bound database.
+   * Dependencies: ApiError, shared navigation state, and the original draft.
+   */
+  function failSolution(failure: unknown) {
+    if (failure instanceof ApiError && failure.code === "workspace_mismatch") {
+      setWorkspaceMismatch(true);
+      onWorkspaceMismatch();
+    } else if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500) {
+      setPending(null);
+      onPendingChange(null);
+      setConflict(failure.status === 409);
+    }
+    setError(`Code save not confirmed. ${errorMessage(failure)}`);
+  }
+
+  /**
+   * Inputs: One immutable solution operation.
+   * Outputs: Its committed receipt or a retained uncertain operation.
+   * Logic: Keep the same submission identity for network and response-loss retries.
+   * Dependencies: The store-bound solution endpoint and receipt validator.
+   */
+  async function sendSolution(original: SolutionRequest) {
+    setSending(true);
+    setPending(original);
+    setError(null);
+    onPendingChange(item.attempt_id);
+    try {
+      const saved = await request<SavedSolution>(`/v1/attempts/${encodeURIComponent(item.attempt_id)}/solution`, {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Coach-Store-Id": storeId }, body: JSON.stringify(original),
+      });
+      await acceptSolution(saved, original);
+    } catch (failure) {
+      failSolution(failure);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  /**
+   * Inputs: An explicit code form submission.
+   * Outputs: One operation bound to the currently saved feedback revision.
+   * Logic: Never submit unsaved feedback changes as part of code evidence.
+   * Dependencies: The current document, revision, and browser UUID generator.
+   */
+  function submitSolution(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (locked || !dirty || !document.code.trim()) return;
+    const body: SolutionDocument = { code: document.code, language: item.attempt.language };
+    if (document.input_definition?.trim()) body.input_definition = document.input_definition;
+    void sendSolution({ submission_id: crypto.randomUUID(), expected_revision: item.attempt.revision, document: body });
+  }
+
+  /**
+   * Inputs: A retry click after an uncertain save.
+   * Outputs: Confirmation from the receipt or the identical operation retried.
+   * Logic: Read before resending; a timeout never establishes that a write failed.
+   * Dependencies: The pending request, receipt endpoint, and sendSolution.
+   */
+  async function retrySolution() {
+    if (!pending || sending || disabled || workspaceMismatch) return;
+    const original = pending;
+    setSending(true);
+    try {
+      const saved = await request<SavedSolution>(`/v1/submissions/${encodeURIComponent(original.submission_id)}`, { headers: { "X-Coach-Store-Id": storeId } });
+      await acceptSolution(saved, original);
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 404) await sendSolution(original);
+      else failSolution(failure);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return <form className="feedback-form solution-form" onSubmit={submitSolution}>
+    <details className="solution-details">
+      <summary>Code and complexity review</summary>
+      <p className="form-note" aria-live="polite">{status ? REVIEW_LABELS[status.status] : "Loading review status…"}</p>
+      {status?.review && <div className="saved-summary"><span>Time: {conclusion(status, "time_complexity") ?? "Not determined"} · Space: {conclusion(status, "space_complexity") ?? "Not determined"}</span></div>}
+      {status?.review && <p className="form-note">{conclusion(status, "reasoning")}</p>}
+      <p className="form-note">Save your feedback changes first. Code is reviewed when your Skill session runs; saving code does not confirm AC or independent mastery.</p>
+      <fieldset className="optional-grid" disabled={locked}>
+        <label className="field full-width"><span>Solution code <small>{item.attempt.language}</small></span><textarea name="code" value={document.code} onChange={changeDocument} rows={8} maxLength={200000} spellCheck={false} placeholder="Paste the code for this attempt" /></label>
+        <label className="field full-width"><span>Input sizes <small>optional</small></span><input name="input_definition" value={document.input_definition ?? ""} onChange={changeDocument} maxLength={4000} placeholder="For example, n is the array length" /></label>
+      </fieldset>
+      {error && <div className="message error" role="alert"><p>{error}</p>{conflict && <button type="button" className="secondary-button" onClick={onReload}>Reload current record</button>}</div>}
+      <div className="form-footer"><span className="save-state" aria-live="polite">{sending ? "Saving code…" : pending ? "Code save awaiting confirmation" : dirty ? "Unsaved code · kept in this page" : "Code and feedback stay separate"}</span>
+        {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" disabled={disabled} onClick={retrySolution}>Retry code save</button> : <button type="submit" className="primary-button" disabled={locked || !dirty || !document.code.trim()}>Save code for review</button>}
+      </div>
+    </details>
+  </form>;
+}
+
 /**
  * Inputs: A saved item, bound store, workspace lock, and shared callbacks.
  * Outputs: A feedback form for one stable practice attempt.
@@ -139,8 +357,9 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
   const [pending, setPending] = useState<FeedbackRequest | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState<{ message: string; conflict: boolean; workspaceMismatch?: boolean } | null>(null);
+  const [solutionPending, setSolutionPending] = useState(false);
   const workspaceMismatch = workspaceLocked || error?.workspaceMismatch === true;
-  const locked = sending || pending !== null || acknowledged || error?.conflict === true || workspaceMismatch;
+  const locked = sending || pending !== null || acknowledged || solutionPending || error?.conflict === true || workspaceMismatch;
   const editDisabled = locked || mode === "";
 
   /**
@@ -330,7 +549,19 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
     return <ResultChoice key={option.value} option={option} selected={draft.result === option.value} onSelect={handleResultChange} />;
   }
 
+  /**
+   * Inputs: The attempt with an uncertain code write, or null after resolution.
+   * Outputs: Shared navigation and feedback locks.
+   * Logic: Prevent feedback changes from racing a code evidence submission.
+   * Dependencies: The parent's pending callback and local lock state.
+   */
+  function handleSolutionPending(id: string | null) {
+    setSolutionPending(id !== null);
+    onPendingChange(id);
+  }
+
   return (
+    <>
     <form className="feedback-form" onSubmit={handleSubmit}>
       {feedback && <div className="saved-summary"><span className="tiny-label">Saved record · revision {item.attempt.revision}</span>
         <span>{feedback.result ? `Result ${feedback.result}` : "Result not recorded"}{feedback.elapsed_minutes != null ? ` · ${feedback.elapsed_minutes} min` : ""}</span></div>}
@@ -374,5 +605,8 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
       </div>
       {pending && !sending && !workspaceMismatch && <p className="form-note">Keep this page open. Retry checks the same submission before sending it again.</p>}
     </form>
+    <SolutionForm item={item} storeId={boundStoreId} drafts={drafts} disabled={sending || pending !== null || error?.conflict === true || workspaceMismatch || touched.size > 0}
+      onPendingChange={handleSolutionPending} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />
+    </>
   );
 }

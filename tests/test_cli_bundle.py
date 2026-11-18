@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,17 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
             entry = bundle / "scripts" / "coach.py"
             data = base / "private"
+            self.assertFalse((bundle / "lib" / "algorithm_coach" / "legacy_import.py").exists())
             self.assertTrue(self._run(entry, data, ["init"])["ok"])
+            connection = sqlite3.connect(data / "coach.sqlite3")
+            try:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+                self.assertIn("learning_checkpoints", tables)
+                self.assertIn("history_evidence", tables)
+                self.assertFalse(any(name.startswith("legacy_") for name in tables))
+            finally:
+                connection.close()
             plan = self._run(entry, data, ["plan", "--date", "2026-01-01"])["data"]
             item = plan["items"][0]
             request = ["feedback", "--attempt", item["attempt_id"], "--submission", "synthetic-submit",
@@ -60,6 +71,10 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(receipt, fetched)
             history = self._run(entry, data, ["history", "--attempt", item["attempt_id"]])["data"]
             self.assertEqual(history["attempt"]["feedback"]["result"], "B")
+            problem_history = self._run(entry, data, ["history", "--problem", item["problem"]["id"]])["data"]
+            self.assertEqual(problem_history["problem_id"], item["problem"]["id"])
+            self.assertEqual(problem_history["attempts"][0]["attempt"]["id"], item["attempt_id"])
+            self.assertEqual(problem_history["evidence"], [])
             following = self._run(entry, data, ["plan", "--date", "2026-01-02"])["data"]
             self.assertTrue(any(row["reason"] == "retest" for row in following["items"]))
             self.assertTrue((bundle / "references" / "policies.md").is_file())
@@ -166,6 +181,24 @@ class CommandTests(unittest.TestCase):
                                             "--expected-revision", "0", "--changes", '{"result":"A","result":"C"}'],
                                expected_code=1)
             self.assertEqual(result["error"]["code"], "validation_error")
+
+    def test_conversion_commands_are_not_runtime_capabilities(self) -> None:
+        """Reject conversion requests without touching a supplied data directory.
+
+        Inputs: Removed command names and a missing synthetic workspace.
+        Outputs: Parser errors and no filesystem initialization.
+        Logic: Keep format maintenance outside the public command surface.
+        Dependencies: subprocess and the Skill entry point.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp) / "not-created"
+            for command in ("legacy", "migrate"):
+                result = subprocess.run(
+                    [sys.executable, "-S", str(ENTRY), "--data-dir", str(data), command],
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertFalse(data.exists())
 
 
 if __name__ == "__main__":

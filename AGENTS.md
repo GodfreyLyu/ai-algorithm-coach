@@ -22,8 +22,10 @@
 - Pause out-of-scope backlog and reviews without writing E, F, or completion.
 - Keep published plans frozen. Report policy conflicts instead of rewriting them.
 - Keep metadata import append-only and separate from private practice data.
-- Require an explicit version 1 migration with a consistent backup. Keep schema
-  changes in one transaction, so failed migrations leave the old data intact.
+- Support new workspaces and existing stores with the current schema only.
+- Keep format conversion and schema upgrades outside the Skill and runtime.
+- Validate external input at adapters and stored data at storage boundaries.
+  Internal code should reuse validated values instead of repeating checks.
 - Treat AC results and complexity entries as self-reports unless separate evidence
   supports a clearly scoped verification claim.
 - Keep all tests and examples synthetic. Do not import private training records.
