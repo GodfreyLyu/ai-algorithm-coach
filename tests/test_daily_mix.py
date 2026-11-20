@@ -420,6 +420,34 @@ class DailyMixServiceTests(unittest.TestCase):
         saved = self._update({"daily_count": 3, "daily_mix": WEAK_NEW})["config"]
         self.assertEqual((saved["run_time"], saved["timezone"]), ("08:30", "Asia/Tokyo"))
 
+    def test_interview_profile_publishes_a_mixed_plan_once(self) -> None:
+        """Publish an interview plan from saved research and keep it on rerun.
+
+        Inputs: An interview workspace, saved synthetic research, and a new-only mix.
+        Outputs: Two new items labeled by category, reused on the second call.
+        Logic: The full store path keeps category labels in practice context.
+        Dependencies: Coach training context, configuration, and planning.
+        """
+        self.coach.close()
+        coach = Coach(Path(self.temp.name) / "interview" / "coach.sqlite3")
+        try:
+            coach.initialize({"timezone": "Asia/Tokyo", "daily_count": 2, "training_profile": "tokyo-interview-v1"})
+            catalog = coach.list_problems()["problems"][:3]
+            for index, problem in enumerate(catalog):
+                context = {"primary_framework": f"synthetic-frame-{index}", "score": [30, 20, 10, 5, 3], "source_verified": True,
+                           "source_verification": {"official": {"url": problem["url"], "checked_date": "2026-01-01"}}}
+                coach.save_training_context(f"research-{index}", {"problem_id": problem["id"], "context": context})
+            coach.update_config({"daily_mix": _mix(("new", 2))}, coach.get_config()["revision"])
+            plan = coach.ensure_plan("2026-01-05")
+            self.assertTrue(plan["created"])
+            self.assertEqual([item["attempt"]["training_context"]["mix_category"] for item in plan["items"]], ["new", "new"])
+            self.assertEqual(plan["diagnostics"]["daily_mix"]["category_shortfalls"], [])
+            again = coach.ensure_plan("2026-01-05")
+            self.assertFalse(again["created"])
+            self.assertEqual([item["attempt_id"] for item in again["items"]], [item["attempt_id"] for item in plan["items"]])
+        finally:
+            coach.close()
+
     def test_interview_target_follows_a_smaller_daily_count(self) -> None:
         """Report the interview target from daily_count instead of a fixed five.
 
