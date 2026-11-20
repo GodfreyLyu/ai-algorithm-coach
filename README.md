@@ -231,8 +231,22 @@ python3.12 skills/algorithm-coach/scripts/coach.py state
 
 ## Schedule daily training
 
-Set the daily trigger in your agent or system scheduler. The stored preferred
-run time is informational. The workspace timezone determines the training date.
+Set the daily trigger in your agent or system scheduler. The stored `run_time`
+records the desired local time; it does not start runs. The workspace timezone
+determines the training date.
+
+To change the time, save it and compare the host task with it:
+
+```sh
+python3.12 skills/algorithm-coach/scripts/coach.py config --changes '{"run_time":"09:00"}' --expected-revision 3
+python3.12 skills/algorithm-coach/scripts/coach.py schedule show
+python3.12 skills/algorithm-coach/scripts/coach.py schedule check --observed-rrule "FREQ=DAILY;BYHOUR=9;BYMINUTE=0" --observed-timezone Asia/Tokyo
+```
+
+Edit the existing scheduled task in place. Do not create a second task. Keep
+times and problem counts out of the task prompt; let it follow saved settings.
+See [daily mix and run time](skills/algorithm-coach/references/settings.md)
+for category slots such as two weak problems and one new problem per day.
 
 ### Run the Skill on a schedule
 

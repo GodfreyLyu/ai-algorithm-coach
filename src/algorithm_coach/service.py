@@ -14,7 +14,7 @@ from .errors import CoachError
 from .core.policies import eligibility, validate_plan_candidates
 from .store.policy_store import PolicyMixin
 from .store.records import PracticeRecordsMixin
-from .core.rules import default_config, derive_learning_state, merge_feedback, validate_config
+from .core.rules import NON_LEARNING_FIELDS, default_config, derive_learning_state, merge_feedback, validate_config
 from .core.scoring import derive_practice_progress, derive_topic_scores
 from .store import storage
 
@@ -210,8 +210,49 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
             normalized = validate_config(merged)
             if normalized != current["config"]:
                 connection.execute("UPDATE config SET revision = revision + 1, body = ? WHERE singleton = 1", (storage.canonical_json(normalized),))
-                self._refresh_state()
+                changed = {key for key in set(normalized) | set(current["config"])
+                           if normalized.get(key) != current["config"].get(key)}
+                if not changed <= NON_LEARNING_FIELDS:
+                    self._refresh_state()
         return self.get_config()
+
+    def preview_config(self, changes: dict, training_date: str | None = None) -> dict:
+        """Inputs: unsaved configuration changes and an optional date. Outputs: a read-only preview.
+
+        Logic: validate the merged settings and run selection without saving or allocating.
+        Dependencies: pure configuration rules, the active policy, and the plan report.
+        """
+        if not isinstance(changes, dict):
+            raise CoachError("validation_error", "Configuration changes must be an object.")
+        current = self.get_config()
+        proposed = validate_config({**current["config"], **changes})
+        local_date = self._date(training_date)
+        policy = self.get_policy(local_date)
+        existing = self._db().execute("SELECT id FROM plans WHERE training_date = ?", (local_date,)).fetchone()
+        report = self._policy_report(policy["policy"], local_date, proposed)
+        return {"training_date": local_date, "current_revision": current["revision"], "config": proposed,
+                "plan_exists": existing is not None, "saved": False, **report}
+
+    def schedule_status(self, observed_rrule: str | None = None, observed_cron: str | None = None,
+                        observed_timezone: str | None = None) -> dict:
+        """Inputs: an optional observed host rule and timezone. Outputs: schedule data.
+
+        Logic: describe the saved run time, or compare it with an observed host rule.
+        Dependencies: saved configuration, workspace identity, and core schedule rules.
+        """
+        from .core.schedule import check_schedule, describe_schedule
+
+        config = self.get_config()
+        settings = config["config"]
+        now = datetime.now(timezone.utc)
+        if observed_rrule is None and observed_cron is None:
+            if observed_timezone is not None:
+                raise CoachError("validation_error", "Use --observed-timezone with an observed rule.")
+            result = describe_schedule(settings["run_time"], settings["timezone"], now)
+        else:
+            result = check_schedule(settings["run_time"], settings["timezone"], now,
+                                    observed_rrule, observed_cron, observed_timezone)
+        return {**result, "config_revision": config["revision"], **self.get_workspace_identity()}
 
     def _date(self, value: str | None) -> str:
         """Inputs: an optional training date. Outputs: an explicit local date.

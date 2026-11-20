@@ -155,7 +155,11 @@ Neither adapter should contain its own selection rules or learning database.
 
 Scheduled execution belongs to an operating system or external platform.
 The Skill does not wake itself up. A scheduled deterministic planning command
-should work without an active model session.
+should work without an active model session. `schedule show` and `schedule check`
+describe and compare the saved run time. They do not edit host tasks.
+
+An optional `daily_mix` setting fills ordered category slots in
+`core/daily_mix.py`. Without it, both profiles keep their original selectors.
 
 ## Explicit limits
 

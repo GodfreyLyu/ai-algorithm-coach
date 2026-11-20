@@ -59,9 +59,10 @@ class PracticeRecordsMixin:
         raise CoachError("not_found", "The practice attempt does not exist.")
 
     def _selection_context(self, training_date: str) -> dict:
-        """Inputs: a validated date. Outputs: candidate research and assignment history.
+        """Inputs: a validated date. Outputs: candidate research, history, and practiced IDs.
 
         Logic: use native selection evidence and frozen plans while keeping recent order.
+        Checkpoints and non-selection evidence mark a problem as already practiced.
         Dependencies: training contexts, history evidence, plans, and current attempts.
         """
         connection = self._db()
@@ -77,7 +78,11 @@ class PracticeRecordsMixin:
             attempt = attempts[row["attempt_id"]]
             history.append({"date": row["training_date"], "problem_id": attempt["problem_id"],
                             **attempt["training_context"]})
-        return {"candidates": candidates, "history": history, "recent_plan": recent_ids}
+        practiced = {row[0] for row in connection.execute("SELECT problem_id FROM learning_checkpoints")}
+        practiced.update(row[0] for row in connection.execute(
+            "SELECT problem_id FROM history_evidence WHERE kind != 'selection' AND problem_id IS NOT NULL"))
+        return {"candidates": candidates, "history": history, "recent_plan": recent_ids,
+                "practiced_problem_ids": sorted(practiced)}
 
     def _history_evidence(self, column: str, value: str) -> list[dict]:
         """Inputs: an internal identity column and value. Outputs: source evidence.

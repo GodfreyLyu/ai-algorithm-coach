@@ -25,6 +25,13 @@ FEEDBACK_FIELDS = (
 )
 COMPLETED_RESULTS = {"A", "B", "C"}
 ABILITY_RESULTS = {"A", "B", "C", "D"}
+# Optional settings are omitted from stored bodies while they keep their default.
+OPTIONAL_CONFIG = {"daily_mix": None}
+MIX_CATEGORIES = ("continue", "weak", "review", "new")
+MIX_CONTINUATION = ("dedicated", "fill_unused")
+PROFILE_DAILY_CEILING = 6
+# Changing these fields does not change derived learning evidence.
+NON_LEARNING_FIELDS = {"run_time", "daily_mix"}
 
 
 def _fail(message: str) -> NoReturn:
@@ -110,7 +117,7 @@ def validate_config(config: dict) -> dict:
     if not all(isinstance(key, str) for key in config):
         _fail("Configuration field names must be strings.")
     result = default_config()
-    unknown = set(config) - set(result)
+    unknown = set(config) - set(result) - set(OPTIONAL_CONFIG)
     if unknown:
         _fail(f"Unsupported configuration fields: {', '.join(sorted(unknown))}.")
     result.update(deepcopy(config))
@@ -144,7 +151,53 @@ def validate_config(config: dict) -> dict:
         _fail("review_intervals must contain 1 to 10 day intervals.")
     for interval in intervals:
         _integer(interval, "review_intervals entry", 1, 3650)
+    mix = validate_daily_mix(result.pop("daily_mix", None), result)
+    if mix is not None:
+        result["daily_mix"] = mix
     return result
+
+
+def validate_daily_mix(mix: object, settings: dict) -> dict | None:
+    """Normalize an optional per-category daily allocation.
+
+    Inputs: A daily_mix value and otherwise validated settings.
+    Outputs: A normalized mix object, or None for the original selection rules.
+    Logic: Require known unique categories whose counts sum to daily_count.
+    Dependencies: MIX_CATEGORIES, MIX_CONTINUATION, and validation helpers.
+    """
+    if mix is None:
+        return None
+    if not isinstance(mix, dict) or not all(isinstance(key, str) for key in mix):
+        _fail("daily_mix must be an object or null.")
+    unknown = set(mix) - {"slots", "continuation"}
+    if unknown:
+        _fail(f"Unsupported daily_mix fields: {', '.join(sorted(unknown))}.")
+    continuation = mix.get("continuation", "dedicated")
+    if continuation not in MIX_CONTINUATION:
+        _fail("daily_mix continuation must be dedicated or fill_unused.")
+    slots = mix.get("slots")
+    if not isinstance(slots, list) or not 1 <= len(slots) <= len(MIX_CATEGORIES):
+        _fail(f"daily_mix slots must list 1 to {len(MIX_CATEGORIES)} categories.")
+    profile = settings["training_profile"] == "tokyo-interview-v1"
+    ceiling = PROFILE_DAILY_CEILING if profile else 100
+    normalized, seen = [], set()
+    for slot in slots:
+        if not isinstance(slot, dict) or set(slot) != {"category", "count"}:
+            _fail("Each daily_mix slot needs only category and count.")
+        category = slot["category"]
+        if not isinstance(category, str) or category not in MIX_CATEGORIES:
+            _fail(f"daily_mix category must be one of: {', '.join(MIX_CATEGORIES)}.")
+        if category in seen:
+            _fail("daily_mix categories must not repeat.")
+        seen.add(category)
+        _integer(slot["count"], f"daily_mix {category} count", 0, ceiling)
+        normalized.append({"category": category, "count": slot["count"]})
+    total = sum(slot["count"] for slot in normalized)
+    if total != settings["daily_count"]:
+        _fail(f"daily_mix counts sum to {total}; they must equal daily_count {settings['daily_count']}.")
+    if profile and total > PROFILE_DAILY_CEILING:
+        _fail(f"The interview profile allows at most {PROFILE_DAILY_CEILING} daily items.")
+    return {"slots": normalized, "continuation": continuation}
 
 
 def merge_feedback(previous: dict | None, changes: dict, kind: str = "progress") -> dict:
@@ -365,6 +418,32 @@ def _derive_state(attempts: list[dict], settings: dict, catalog: list[dict]) -> 
     }
 
 
+def select_with_diagnostics(
+    catalog: list[dict], attempts: list[dict], config: dict,
+    training_date: str, state: dict | None = None, policy: dict | None = None,
+    selection_context: dict | None = None,
+) -> tuple[list[dict], dict | None]:
+    """Select daily candidates and return configured-mix diagnostics.
+
+    Inputs: The same values as select_candidates.
+    Outputs: Candidates and mix diagnostics, or None without a daily_mix.
+    Logic: Use the original selectors unless the learner configured a mix.
+    Dependencies: select_candidates and daily_mix.select_mixed.
+    """
+    settings = validate_config(config)
+    if settings.get("daily_mix") is None:
+        return select_candidates(catalog, attempts, settings, training_date, state, policy, selection_context), None
+    active_policy = validate_policy(default_policy() if policy is None else policy, catalog)
+    if not policy_active(active_policy, training_date):
+        raise CoachError("inactive_policy", "The selected policy does not cover the training date.")
+    _date(training_date, "training_date")
+    state = state if state is not None else _derive_state(attempts, settings, catalog)
+    from .daily_mix import select_mixed
+
+    result = select_mixed(catalog, attempts, settings, training_date, state, active_policy, selection_context)
+    return result["selected"], result["diagnostics"]
+
+
 def select_candidates(
     catalog: list[dict], attempts: list[dict], config: dict,
     training_date: str, state: dict | None = None, policy: dict | None = None,
@@ -384,6 +463,10 @@ def select_candidates(
         raise CoachError("inactive_policy", "The selected policy does not cover the training date.")
     eligible_catalog = filter_catalog(catalog, active_policy)
     state = state if state is not None else _derive_state(attempts, settings, catalog)
+    if settings.get("daily_mix") is not None:
+        from .daily_mix import select_mixed
+
+        return select_mixed(catalog, attempts, settings, training_date, state, active_policy, selection_context)["selected"]
     if settings["training_profile"] == "tokyo-interview-v1":
         from .training_profile import select_profile_candidates
 

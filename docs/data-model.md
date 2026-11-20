@@ -16,14 +16,23 @@ Updates use a partial changes object and the expected revision.
 | `daily_count` | `5` | Generated plan capacity, including unfinished work. |
 | `baseline_count` | `4` | Existing selection preference; not a phase quota. |
 | `timezone` | `UTC` | IANA timezone for training dates. |
-| `run_time` | `null` | Optional preferred local time; not an active timer. |
+| `run_time` | `null` | Desired local HH:MM for the host scheduler; not an active timer. |
 | `review_intervals` | `[3, 7]` | Required spacing between qualifying independent attempts. |
 | `assisted_review_days` | `1` | Review delay after B or C. |
 | `stable_review_days` | `30` | Maintenance review delay after stable evidence. |
 | `skip_cooldown_days` | `7` | Default eligibility delay after a skipped attempt. |
 | `training_profile` | `standard` | Standard rules or the opt-in interview profile. |
+| `daily_mix` | omitted | Optional ordered category slots. Omitted means the original selection. |
 
 Changing saved configuration does not rewrite a published plan.
+`daily_mix` is stored only when set. Setting it to `null` removes the field.
+Its `slots` list `weak`, `new`, `review`, or `continue` counts that sum to
+`daily_count`. `continuation` is `dedicated` (default) or `fill_unused`.
+`new` excludes any problem with an attempt in any language, a learning
+checkpoint, or history evidence whose kind is not `selection`.
+Plan diagnostics then include `daily_mix` with per-category shortfalls.
+Changing only `run_time` or `daily_mix` does not rebuild learning state.
+Without a mix, the interview profile targets `min(5, daily_count)` items.
 The standard profile has no phase quota system. A policy `max_daily_count` is the optional
 shared hard cap for manual and planned allocations. Without it, manual practice
 is not implicitly capped by `daily_count`.

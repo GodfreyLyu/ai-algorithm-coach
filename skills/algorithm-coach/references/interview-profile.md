@@ -34,8 +34,8 @@ problems only when the framework value and time return justify them.
 
 The core preserves unfinished work first, including its recommendation date,
 round, order, identity, and learning due date. Daily roles do not change identity.
-Use four base slots and one normal supplement. A sixth slot needs useful distinct
-work or unfinished backlog. All allocations share the six-item ceiling and active
+Without `daily_mix`, use four base slots and one normal supplement, capped by
+`daily_count`. A sixth slot needs useful distinct work or unfinished backlog. All allocations share the six-item ceiling and active
 scope limits. Keep unselected backlog pending. Report source, framework, scope,
 or capacity shortfalls without creating a replacement workspace or extra work.
 
@@ -70,7 +70,10 @@ and `weekly_repeat_justification`. Continuation and useful retests can repeat
 weekly material. Mark retests explicitly; do not rename accidental repetition.
 Transfer requires `transfer_from`, `transfer_change`, the same primary framework,
 and two qualifying independent performances on separate dates. Keep original
-retests when proof is missing. Do not impose a fixed new/retest/transfer ratio.
+retests when proof is missing. Do not impose a fixed new/retest/transfer ratio
+yourself. When `config` contains `daily_mix`, the core fills its category slots.
+Research enough candidates for each slot and report category shortfalls.
+See [daily mix and run time](settings.md).
 
 ## Session and presentation
 

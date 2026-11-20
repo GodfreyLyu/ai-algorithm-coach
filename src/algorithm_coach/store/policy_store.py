@@ -7,7 +7,7 @@ from uuid import uuid4
 from ..core.catalog_validation import CATALOG_METADATA_FIELDS, validate_catalog
 from ..errors import CoachError
 from ..core.policies import default_policy, eligibility, filter_catalog, policy_active, validate_plan_candidates, validate_policy
-from ..core.rules import select_candidates
+from ..core.rules import MIX_CATEGORIES, MIX_CONTINUATION, select_candidates, select_with_diagnostics, validate_config
 from . import storage
 
 
@@ -160,14 +160,14 @@ class PolicyMixin:
             self._db().execute("INSERT INTO submissions VALUES (?, ?, ?, ?)", (submission_id, "propose_policy", payload_hash, storage.canonical_json(receipt)))
         return self.receipt(submission_id)
 
-    def _paused_by_policy(self, body: dict, training_date: str) -> dict:
-        """Inputs: policy content and date. Outputs: paused unfinished work and reviews.
+    def _paused_by_policy(self, body: dict, training_date: str, language: str | None = None) -> dict:
+        """Inputs: policy content, date, and optional language. Outputs: paused work and reviews.
 
         Logic: report exclusions without changing attempts or inventing feedback.
         Dependencies: saved metadata, current attempts, and review tasks.
         """
         catalog = {problem["id"]: problem for problem in self.list_problems()["problems"]}
-        language = self.get_config()["config"]["language"]
+        language = self.get_config()["config"]["language"] if language is None else language
         attempts = self._attempts()
         lookup = {attempt["id"]: attempt for attempt in attempts}
         backlog = []
@@ -206,19 +206,24 @@ class PolicyMixin:
         reserved.update(row[0] for row in connection.execute("SELECT i.attempt_id FROM plan_items i JOIN plans p ON p.id = i.plan_id WHERE p.training_date = ?", (training_date,)))
         return reserved
 
-    def _policy_report(self, body: dict, training_date: str) -> dict:
-        """Inputs: policy body and date. Outputs: a read-only scheduling preview.
+    def _policy_report(self, body: dict, training_date: str, config: dict | None = None) -> dict:
+        """Inputs: policy body, date, and optional unsaved settings. Outputs: a read-only preview.
 
-        Logic: select within all hard gates and report capacity and paused work.
+        Logic: select within all hard gates and report capacity, paused work, and mix shortfalls.
         Dependencies: pure selection, final validation, and persisted training state.
         """
-        config = self.get_config()["config"]
+        config = self.get_config()["config"] if config is None else config
         catalog = self.list_problems()["problems"]
-        candidates = select_candidates(catalog, self._attempts(), config, training_date, self._state(), body,
-                                       selection_context=self._selection_context(training_date))
+        arguments = (catalog, self._attempts(), config, training_date, self._state(), body)
+        context = self._selection_context(training_date)
+        mix = None
+        if validate_config(config).get("daily_mix") is None:
+            candidates = select_candidates(*arguments, selection_context=context)
+        else:
+            candidates, mix = select_with_diagnostics(*arguments, selection_context=context)
         validate_plan_candidates(candidates, catalog, body, config)
         reserved = self._reserved_attempt_ids(training_date)
-        maximum = self._daily_maximum(body)
+        maximum = self._daily_maximum(body, config)
         remaining = max(0, maximum - len(reserved)) if maximum is not None else None
         selected = []
         capacity_limited = 0
@@ -231,19 +236,26 @@ class PolicyMixin:
             if remaining is not None:
                 remaining -= cost
         validate_plan_candidates(selected, catalog, body, config)
-        profile_target = 5 if config.get("training_profile") == "tokyo-interview-v1" else config["daily_count"]
+        profile_target = config["daily_count"]
+        if mix is None and config.get("training_profile") == "tokyo-interview-v1":
+            # The interview profile normally targets five items; a sixth is optional.
+            profile_target = min(5, profile_target)
         target = min(profile_target, maximum or profile_target)
-        paused = self._paused_by_policy(body, training_date)
-        return {"eligible_count": len(filter_catalog(catalog, body)), "selected": selected, "selected_count": len(selected), "target_count": target, "shortfall": max(0, target - len(selected)), "reserved_count": len(reserved), "remaining_capacity": remaining, "capacity_limited_count": capacity_limited, "paused_backlog": paused["backlog"], "paused_reviews": paused["reviews"]}
+        paused = self._paused_by_policy(body, training_date, config["language"])
+        report = {"eligible_count": len(filter_catalog(catalog, body)), "selected": selected, "selected_count": len(selected), "target_count": target, "shortfall": max(0, target - len(selected)), "reserved_count": len(reserved), "remaining_capacity": remaining, "capacity_limited_count": capacity_limited, "paused_backlog": paused["backlog"], "paused_reviews": paused["reviews"]}
+        if mix is not None:
+            report["daily_mix"] = mix
+        return report
 
-    def _daily_maximum(self, body: dict) -> int | None:
-        """Inputs: an effective scope policy. Outputs: the shared allocation cap.
+    def _daily_maximum(self, body: dict, config: dict | None = None) -> int | None:
+        """Inputs: an effective scope policy and optional settings. Outputs: the shared allocation cap.
 
         Logic: combine the profile's six-slot ceiling with any stricter scope cap.
         Dependencies: saved configuration. Standard scope semantics stay independent.
         """
+        config = self.get_config()["config"] if config is None else config
         maximum = body["max_daily_count"]
-        if self.get_config()["config"].get("training_profile") == "tokyo-interview-v1":
+        if config.get("training_profile") == "tokyo-interview-v1":
             maximum = min(6, maximum) if maximum is not None else 6
         return maximum
 
@@ -359,7 +371,7 @@ class PolicyMixin:
         catalog = self.list_problems()
         topics = sorted({tag for problem in catalog["problems"] for tag in problem["tags"]})
         difficulties = sorted({problem["difficulty"] for problem in catalog["problems"]})
-        return {"fields": list(default_policy()), "topics": topics, "difficulties": difficulties, "problem_ids": [problem["id"] for problem in catalog["problems"]], "catalog_version": catalog["catalog_version"], "problem_count": len(catalog["problems"]), "supports": {"hard_scope": True, "preferred_topics": True, "max_daily_count": True, "dated_policy": True, "metadata_import": True, "metadata_import_preview": True, "metadata_import_hash_guard": True, "problem_statement_import": False, "remote_fetch": False}}
+        return {"fields": list(default_policy()), "topics": topics, "difficulties": difficulties, "problem_ids": [problem["id"] for problem in catalog["problems"]], "catalog_version": catalog["catalog_version"], "problem_count": len(catalog["problems"]), "supports": {"hard_scope": True, "preferred_topics": True, "max_daily_count": True, "dated_policy": True, "metadata_import": True, "metadata_import_preview": True, "metadata_import_hash_guard": True, "problem_statement_import": False, "remote_fetch": False, "daily_mix": True, "daily_mix_preview": True, "schedule_check": True, "scheduler_control": False}, "daily_mix_categories": list(MIX_CATEGORIES), "daily_mix_continuation": list(MIX_CONTINUATION)}
 
     def preview_catalog(self, problems: list[dict]) -> dict:
         """Classify one metadata batch without changing local training records.
