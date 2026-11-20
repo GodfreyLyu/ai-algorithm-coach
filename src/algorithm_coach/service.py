@@ -14,7 +14,7 @@ from .errors import CoachError
 from .core.policies import eligibility, validate_plan_candidates
 from .store.policy_store import PolicyMixin
 from .store.records import PracticeRecordsMixin
-from .core.rules import default_config, derive_learning_state, merge_feedback, validate_config
+from .core.rules import NON_LEARNING_FIELDS, default_config, derive_learning_state, merge_feedback, validate_config
 from .core.scoring import derive_practice_progress, derive_topic_scores
 from .store import storage
 
@@ -210,7 +210,10 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
             normalized = validate_config(merged)
             if normalized != current["config"]:
                 connection.execute("UPDATE config SET revision = revision + 1, body = ? WHERE singleton = 1", (storage.canonical_json(normalized),))
-                self._refresh_state()
+                changed = {key for key in set(normalized) | set(current["config"])
+                           if normalized.get(key) != current["config"].get(key)}
+                if not changed <= NON_LEARNING_FIELDS:
+                    self._refresh_state()
         return self.get_config()
 
     def _date(self, value: str | None) -> str:
