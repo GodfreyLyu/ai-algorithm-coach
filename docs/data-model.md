@@ -116,6 +116,8 @@ Each topic reports its independent A percentage, sample size, result counts,
 and existing stable-mastery count. No samples means no score. See the
 [score definition](web.md#topic-scores). The UI score does not change mastery
 or selection rules and needs no additional persistence tables.
+Practice progress is the same kind of projection. It groups current results by
+practice date and lists each problem's latest A-D result. It adds no tables.
 
 ## Storage boundary
 

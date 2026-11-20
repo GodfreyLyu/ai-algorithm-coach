@@ -142,3 +142,32 @@ export interface ComplexityItem {
 export interface ComplexityStatus {
   items: ComplexityItem[];
 }
+
+export type ResultCounts = Record<Result, number>;
+
+export interface ProgressDay {
+  date: string;
+  results: ResultCounts;
+  minutes: number;
+}
+
+export interface ProgressProblem {
+  problem_id: string;
+  title: string;
+  difficulty: string;
+  url: string;
+  tags: string[];
+  result: "A" | "B" | "C" | "D";
+  practice_date: string;
+  attempt_count: number;
+  stable: boolean;
+}
+
+export interface Progress {
+  language: string;
+  basis: string;
+  progress_version: string;
+  state_version: number;
+  days: ProgressDay[];
+  problems: ProgressProblem[];
+}

@@ -49,6 +49,18 @@ function skill(arguments_, directory = data) {
 }
 
 /**
+ * Inputs: A saved attempt, an operation ID, a revision, and a synthetic document.
+ * Outputs: The committed Skill code evidence receipt.
+ * Logic: Write the fixture and save it through the public Skill command.
+ * Dependencies: The temporary test directory and skill.
+ */
+function saveSkillCode(item, submission, revision, document) {
+  const file = path.join(temporary, `${submission}.json`);
+  fs.writeFileSync(file, JSON.stringify(document));
+  return skill(["review", "evidence", "--attempt", item.attempt_id, "--expected-revision", String(revision), "--submission", submission, "--file", file]);
+}
+
+/**
  * Inputs: A synthetic authority and an optional preferred local port.
  * Outputs: A ready session created through the public standalone Skill.
  * Logic: Let the runtime bind a port, then validate its date and store-bound link.
@@ -86,9 +98,24 @@ function stopServer(directory = data) {
  * Dependencies: Playwright accessible roles and the attempt metadata attribute.
  */
 async function openCard(page, item) {
-  const card = page.locator(`[data-attempt-id="${item.attempt_id}"]`);
-  await card.getByRole("button", { name: /^(Record result for|Update record for) / }).click();
+  const navigation = page.locator(`[data-plan-attempt-id="${item.attempt_id}"]`);
+  await expect(navigation).toHaveAccessibleName(new RegExp(`^Open ${escapeRegExp(item.problem.title)}, `));
+  await navigation.click();
+  await expect(navigation).toHaveAttribute("aria-current", "true");
+  const card = page.locator(`.problem-card[data-attempt-id="${item.attempt_id}"]`);
+  await expect(card).toBeVisible();
   return card;
+}
+
+/**
+ * Inputs: A page displaying the synthetic five-problem plan.
+ * Outputs: Confirmation of its sidebar and selected detail.
+ * Logic: Keep plan membership separate from the single visible editor.
+ * Dependencies: Playwright locators and the stable plan attempt attributes.
+ */
+async function expectPlan(page) {
+  await expect(page.locator("[data-plan-attempt-id]")).toHaveCount(5);
+  await expect(page.locator(".problem-card")).toHaveCount(1);
 }
 
 /**
@@ -129,6 +156,8 @@ async function main() {
     const third = seeded.items[2];
     const fourth = seeded.items[3];
     const fifth = seeded.items[4];
+    const legacyComplexity = { time_complexity: "O(V + E)", space_complexity: "O(V)" };
+    skill(["feedback", "--attempt", second.attempt_id, "--submission", "synthetic-legacy-complexity", "--expected-revision", "0", "--changes", JSON.stringify(legacyComplexity)]);
     const origin = new URL(session.web.url).origin;
     const port = Number(new URL(session.web.url).port);
     const repeated = startSession();
@@ -151,18 +180,27 @@ async function main() {
     await page.goto(session.web.url);
     await expect(page.getByRole("heading", { name: "Training record" })).toBeVisible();
     await expect(page.getByLabel("Training date", { exact: true })).toHaveValue(trainingDate);
-    await expect(page.locator(".problem-card")).toHaveCount(5);
+    await expectPlan(page);
     await page.screenshot({ path: path.join(artifacts, "plan-desktop.png"), fullPage: true });
 
-    let card = await openCard(page, first);
-    await card.getByText("Code and complexity review", { exact: true }).click();
+    let card = page.locator(`.problem-card[data-attempt-id="${first.attempt_id}"]`);
+    await expect(card).toBeVisible();
+    await expect(card.locator(".solution-pane")).toHaveCount(1);
+    await expect(card.locator(".record-pane")).toHaveCount(1);
+    await expect(card.locator("form.attempt-editor")).toHaveCount(1);
+    await expect(card.locator('[name="code"]')).toBeVisible();
+    await expect(card.locator('select[name="time_complexity"]')).toBeHidden();
+    await expect(card.locator('select[name="space_complexity"]')).toHaveCount(1);
+    await expect(card.locator('input[name="time_complexity"], input[name="space_complexity"]')).toHaveCount(0);
+    await expect(card.getByText("Code and complexity review", { exact: true })).toHaveCount(0);
+    await expect(card.getByRole("option", { name: "Choose an update", exact: true })).toHaveCount(0);
     await expect(card.getByText("No code submitted", { exact: true })).toBeVisible();
     const syntheticCode = "int identity(int n) { return n; }";
     await card.locator('[name="code"]').fill(syntheticCode);
     await card.locator('[name="input_definition"]').fill("n is one integer");
-    await card.getByRole("button", { name: `Close ${first.problem.title}`, exact: true }).click();
+    await openCard(page, second);
     card = await openCard(page, first);
-    await card.getByText("Code and complexity review", { exact: true }).click();
+    await expect(card.locator('[name="code"]')).toBeVisible();
     await expect(card.locator('[name="code"]')).toHaveValue(syntheticCode);
     /**
      * Inputs: The next code evidence response.
@@ -175,63 +213,87 @@ async function main() {
       await route.abort("failed");
     }
     await page.route("**/v1/attempts/*/solution", loseCodeResponse, { times: 1 });
-    await card.getByRole("button", { name: "Save code for review", exact: true }).click();
-    await expect(card.getByRole("button", { name: "Retry code save", exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Save code", exact: true })).toBeEnabled();
+    await card.getByRole("button", { name: "Save code", exact: true }).click();
+    await expect(card.getByRole("button", { name: "Retry save", exact: true })).toBeVisible();
     await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Topic scores", exact: true })).toBeDisabled();
-    await card.getByRole("button", { name: "Retry code save", exact: true }).click();
+    await expect(page.getByLabel("Training date", { exact: true })).toBeDisabled();
+    for (const item of seeded.items) {
+      await expect(page.locator(`[data-plan-attempt-id="${item.attempt_id}"]`)).toBeDisabled();
+    }
+    await card.getByRole("button", { name: "Retry save", exact: true }).click();
     await expect(card.getByText("Code saved · awaiting review", { exact: true })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Saved code for" })).toBeVisible();
     const codeStatus = skill(["review", "status", "--attempt", first.attempt_id]);
     assert.equal(codeStatus.items[0].evidence.body.code, syntheticCode);
     assert.equal(codeStatus.items[0].feedback_revision, 0);
     assert.equal(skill(["history", "--attempt", first.attempt_id]).revisions.length, 0);
     await page.screenshot({ path: path.join(artifacts, "code-review-desktop.png"), fullPage: true });
-    await card.getByText("Code and complexity review", { exact: true }).click();
     await expect(card.getByRole("radio", { checked: true })).toHaveCount(0);
     await card.getByRole("radio", { name: /Independent AC/ }).check();
+    await expect(card.locator('[name="code"]')).toBeEnabled();
+    await expect(card.getByRole("button", { name: "Save feedback and code", exact: true })).toBeEnabled();
     await page.keyboard.press("ArrowRight");
     await expect(card.getByRole("radio", { name: /AC with hints/ })).toBeChecked();
     await page.keyboard.press("ArrowLeft");
     await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
     await expect(card.getByRole("radio", { checked: true })).toHaveCount(1);
     await card.locator('[name="elapsed_minutes"]').fill("25");
+    await expect(card.locator('select[name="time_complexity"]')).toBeHidden();
     await card.getByText("More details", { exact: false }).click();
+    await card.locator('select[name="time_complexity"]').selectOption("O(n)");
+    await card.locator('select[name="space_complexity"]').selectOption("O(1)");
     await card.locator('[name="boundary_tests"]').selectOption("false");
-    await card.getByRole("button", { name: `Close ${first.problem.title}`, exact: true }).click();
+    await openCard(page, second);
     card = await openCard(page, first);
     await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
-    await card.getByText("More details", { exact: false }).click();
     await expect(card.locator('[name="boundary_tests"]')).toHaveValue("false");
     const otherDraft = await openCard(page, second);
     await expect(otherDraft.getByRole("radio", { checked: true })).toHaveCount(0);
     await expect(otherDraft.locator('[name="elapsed_minutes"]')).toHaveValue("");
+    await expect(otherDraft.locator('select[name="time_complexity"]')).toHaveValue(legacyComplexity.time_complexity);
+    await expect(otherDraft.locator('select[name="space_complexity"]')).toHaveValue(legacyComplexity.space_complexity);
     card = await openCard(page, first);
     await page.getByRole("button", { name: "Topic scores", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Topic scores", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Plan & records", exact: true }).click();
-    card = page.locator(`[data-attempt-id="${first.attempt_id}"]`);
-    if (!(await card.locator("form").count())) card = await openCard(page, first);
+    await page.getByRole("button", { name: "Training record", exact: true }).click();
+    card = await openCard(page, first);
     await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
     await page.getByLabel("Training date", { exact: true }).fill("2099-01-01");
     await expect(page.getByRole("heading", { name: "No saved plan for this date" })).toBeVisible();
-    await page.getByLabel("Training date", { exact: true }).fill(trainingDate);
-    await expect(page.locator(".problem-card")).toHaveCount(5);
+    await page.getByRole("button", { name: "Previous day", exact: true }).click();
+    await expect(page.getByLabel("Training date", { exact: true })).toHaveValue("2098-12-31");
+    await page.getByLabel("Training date", { exact: true }).fill("2026-01-01");
+    await expect(page.getByRole("heading", { name: "No saved plan for this date" })).toBeVisible();
+    await page.getByRole("button", { name: "Next day", exact: true }).click();
+    await expect(page.getByLabel("Training date", { exact: true })).toHaveValue(trainingDate);
+    await expectPlan(page);
     card = await openCard(page, first);
     await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
-    await card.getByText("More details", { exact: false }).click();
     await expect(card.locator('[name="boundary_tests"]')).toHaveValue("false");
     await page.screenshot({ path: path.join(artifacts, "form-desktop.png"), fullPage: true });
-    await card.getByRole("button", { name: /Save feedback/ }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Saved to your record" })).toBeVisible();
+    await card.getByRole("button", { name: "Save feedback and code", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: `Saved ${first.problem.title} · Now on ${second.problem.title}` })).toBeVisible();
+    await expect(page.locator(`[data-plan-attempt-id="${second.attempt_id}"]`)).toHaveAttribute("aria-current", "true");
+    await expect(page.locator(`[data-plan-attempt-id="${first.attempt_id}"] .plan-item-status`)).toHaveText("A");
     const initialHistory = skill(["history", "--attempt", first.attempt_id]);
     assert.equal(initialHistory.attempt.feedback.result, "A");
     assert.equal(initialHistory.attempt.feedback.elapsed_minutes, 25);
     assert.equal(initialHistory.attempt.feedback.boundary_tests, false);
+    assert.equal(initialHistory.attempt.feedback.time_complexity, "O(n)");
+    assert.equal(initialHistory.attempt.feedback.space_complexity, "O(1)");
     assert.equal(initialHistory.revisions.length, 1);
-    assert.equal(skill(["review", "status", "--attempt", first.attempt_id]).items[0].status, "stale");
+    card = await openCard(page, first);
+    await expect(card.locator('[name="code"]')).toHaveValue(syntheticCode);
+    await expect(card.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    const reboundCode = skill(["review", "status", "--attempt", first.attempt_id]).items[0];
+    assert.equal(reboundCode.status, "pending");
+    assert.equal(reboundCode.evidence.feedback_revision, 1);
+    assert.equal(reboundCode.evidence.body.code, syntheticCode);
     const initialScores = await scores(page, origin, session.web.store_id);
     for (const row of initialScores.topics) {
       if (first.problem.tags.includes(row.tag)) {
@@ -241,20 +303,41 @@ async function main() {
       }
     }
 
+    const progress = await (await page.request.get(`${origin}/v1/progress?language=Java`, { headers: { "X-Coach-Store-Id": session.web.store_id } })).json();
+    assert.equal(progress.data.problems.length, 1);
+    assert.equal(progress.data.problems[0].problem_id, first.problem.id);
     await page.getByRole("button", { name: "Topic scores", exact: true }).click();
-    await expect(page.getByRole("heading", { name: /Topic/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Topic scores", exact: true })).toBeVisible();
+    await expect(page.locator(".stat-tile").filter({ hasText: "Recorded problems" })).toContainText("1");
+    await expect(page.locator(".activity-column")).toHaveCount(28);
+    await page.getByRole("button", { name: "12 weeks", exact: true }).click();
+    await expect(page.locator(".activity-column")).toHaveCount(84);
+    const practicedTopic = page.locator(`.topic-list [data-topic="${first.problem.tags[0]}"]`);
+    await expect(practicedTopic).toBeVisible();
+    await practicedTopic.locator(".topic-toggle").click();
+    await expect(practicedTopic.getByRole("link", { name: first.problem.title })).toBeVisible();
+    await expect(page.locator(".untouched [data-topic]").first()).toBeVisible();
     await page.screenshot({ path: path.join(artifacts, "scores-desktop.png"), fullPage: true });
-    await page.getByRole("button", { name: "Plan & records", exact: true }).click();
-    card = page.locator(`[data-attempt-id="${first.attempt_id}"]`);
-    if (!(await card.locator("form").count())) card = await openCard(page, first);
-    await card.getByLabel("How are you updating this record?").selectOption("correction");
+    await page.getByRole("button", { name: "Training record", exact: true }).click();
+    card = await openCard(page, first);
+    await card.getByRole("button", { name: "Correct saved record", exact: true }).click();
     await card.getByRole("radio", { name: /AC with hints/ }).check();
     await card.locator('[name="elapsed_minutes"]').fill("30");
-    await card.getByRole("button", { name: /Save feedback/ }).click();
-    await expect(page.getByRole("status").filter({ hasText: "revision 2" })).toBeVisible();
+    await card.locator('select[name="time_complexity"]').selectOption("O(n log n)");
+    await card.getByRole("button", { name: "Cancel correction", exact: true }).click();
+    await expect(card.getByRole("radio", { name: /Independent AC/ })).toBeChecked();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("25");
+    await expect(card.locator('select[name="time_complexity"]')).toHaveValue("O(n)");
+    assert.equal(skill(["history", "--attempt", first.attempt_id]).revisions.length, 1);
+    await card.getByRole("button", { name: "Correct saved record", exact: true }).click();
+    await card.getByRole("radio", { name: /AC with hints/ }).check();
+    await card.locator('[name="elapsed_minutes"]').fill("30");
+    await card.getByRole("button", { name: "Save correction and code", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: `Saved ${first.problem.title}` })).toBeVisible();
     const corrected = skill(["history", "--attempt", first.attempt_id]);
     assert.deepEqual(corrected.revisions.map(resultOfRevision), ["A", "B"]);
     assert.equal(corrected.attempt.feedback.boundary_tests, false);
+    card = await openCard(page, first);
     await expect(card.getByRole("radio", { name: /AC with hints/ })).toBeChecked();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("30");
 
@@ -272,16 +355,18 @@ async function main() {
       await route.abort("failed");
     }
     await page.route("**/v1/attempts/*/feedback", loseResponse, { times: 1 });
-    await card.getByRole("button", { name: /Save feedback/ }).click();
-    await expect(card.getByRole("button", { name: "Retry this save", exact: true })).toBeVisible();
+    await page.keyboard.press("Control+Enter");
+    await expect(card.getByRole("button", { name: "Retry save", exact: true })).toBeVisible();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("20");
     await expect(card.getByRole("radio", { name: /Not yet AC/ })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Topic scores", exact: true })).toBeDisabled();
-    await card.getByRole("button", { name: "Retry this save", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "revision 1" })).toBeVisible();
+    await card.getByRole("button", { name: "Retry save", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: `Saved ${second.problem.title}` })).toBeVisible();
     const recovered = skill(["history", "--attempt", second.attempt_id]);
-    assert.equal(recovered.revisions.length, 1);
+    assert.equal(recovered.revisions.length, 2);
     assert.equal(recovered.attempt.feedback.result, "D");
+    assert.equal(recovered.attempt.feedback.time_complexity, legacyComplexity.time_complexity);
+    assert.equal(recovered.attempt.feedback.space_complexity, legacyComplexity.space_complexity);
 
     card = await openCard(page, third);
     await expect(card.locator('[name="defer_until"]')).toBeHidden();
@@ -308,10 +393,10 @@ async function main() {
     }
     await page.route("**/v1/attempts/*/feedback", stallResponse, { times: 1 });
     await card.getByRole("button", { name: /Save feedback/ }).click();
-    await expect(card.getByRole("button", { name: "Retry this save", exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(card.getByRole("button", { name: "Retry save", exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("0");
-    await card.getByRole("button", { name: "Retry this save", exact: true }).click();
-    await expect(card.getByRole("button", { name: "Retry this save", exact: true })).toHaveCount(0);
+    await card.getByRole("button", { name: "Retry save", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Retry save", exact: true })).toHaveCount(0);
     if (stalledRoute) await stalledRoute.abort().catch(ignoreRouteFailure);
     const timedOut = skill(["history", "--attempt", third.attempt_id]);
     assert.equal(timedOut.revisions.length, 1);
@@ -325,8 +410,140 @@ async function main() {
     assert.equal(new URL(session.web.url).origin, origin);
     assert.notEqual(session.web.instance_id, oldInstance);
     await page.reload();
-    await expect(page.locator(`[data-attempt-id="${first.attempt_id}"]`)).toContainText("B · AC with hints");
-    await expect(page.locator(`[data-attempt-id="${second.attempt_id}"]`)).toContainText("D · Not yet AC");
+    card = await openCard(page, first);
+    await expect(card).toContainText("B · AC with hints");
+    await expect(card.locator('[name="code"]')).toHaveValue(syntheticCode);
+    await expect(card.getByText("Code saved · awaiting review", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    assert.equal(skill(["review", "status", "--attempt", first.attempt_id]).items[0].evidence.feedback_revision, 2);
+    card = await openCard(page, second);
+    await expect(card).toContainText("D · Not yet AC");
+    const hydrationPage = await browser.newPage();
+    hydrationPage.on("pageerror", capturePageError);
+    let heldHydration = null;
+    let signalHydrationCaptured = null;
+    /**
+     * Inputs: The resolver for the captured-response promise.
+     * Outputs: A signal available to the delayed route handler.
+     * Logic: Let the main flow wait until the server snapshot is held.
+     * Dependencies: The native Promise constructor.
+     */
+    function captureHydrationPromise(resolve) { signalHydrationCaptured = resolve; }
+    const hydrationCaptured = new Promise(captureHydrationPromise);
+    /**
+     * Inputs: The first selected attempt's code status request.
+     * Outputs: A real server response held until after local edits.
+     * Logic: Reproduce slow hydration without changing server evidence.
+     * Dependencies: Playwright routing and the live complexity endpoint.
+     */
+    async function holdHydration(route) {
+      const response = await route.fetch();
+      heldHydration = { route, response };
+      signalHydrationCaptured();
+    }
+    const reviewPath = `**/v1/attempts/${first.attempt_id}/complexity`;
+    await hydrationPage.route(reviewPath, holdHydration, { times: 1 });
+    await hydrationPage.goto(session.web.url);
+    const hydrationCard = hydrationPage.locator(`.problem-card[data-attempt-id="${first.attempt_id}"]`);
+    await expect(hydrationCard.locator('[name="code"]')).toBeVisible();
+    await hydrationCaptured;
+    const editedCode = "int identity(int n) { return n + 1; }";
+    const editedInput = "n is the modified input size";
+    await hydrationCard.locator('[name="code"]').fill(editedCode);
+    await hydrationCard.locator('[name="input_definition"]').fill(editedInput);
+    await hydrationCard.locator('[name="elapsed_minutes"]').fill("35");
+    await expect(hydrationCard.locator('button[type="submit"]')).toBeDisabled();
+    await heldHydration.route.fulfill({ response: heldHydration.response });
+    await expect(hydrationCard.locator(".review-pill")).toHaveText("Saved version · Code saved · awaiting review");
+    await expect(hydrationCard.getByRole("button", { name: "Save feedback and code", exact: true })).toBeEnabled();
+    await expect(hydrationCard.locator('[name="code"]')).toHaveValue(editedCode);
+    await expect(hydrationCard.locator('[name="input_definition"]')).toHaveValue(editedInput);
+    await expect(hydrationCard.locator('[name="elapsed_minutes"]')).toHaveValue("35");
+    assert.equal(skill(["review", "status", "--attempt", first.attempt_id]).items[0].evidence.body.code, syntheticCode);
+
+    /**
+     * Inputs: The complexity request after a plan refresh.
+     * Outputs: A failed read without any store change.
+     * Logic: Keep the save paused until loading the saved record succeeds.
+     * Dependencies: Playwright routing.
+     */
+    async function failReview(route) { await route.abort("failed"); }
+    await hydrationPage.route(reviewPath, failReview, { times: 1 });
+    await hydrationPage.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(hydrationCard.getByText("Saved code could not be read.", { exact: true })).toBeVisible();
+    await expect(hydrationCard.locator('button[type="submit"]')).toBeDisabled();
+    await hydrationCard.getByRole("button", { name: "Retry loading saved code", exact: true }).click();
+    await expect(hydrationCard.getByRole("button", { name: "Save feedback and code", exact: true })).toBeEnabled();
+
+    /**
+     * Inputs: The complexity request after another plan refresh.
+     * Outputs: A response with a later current feedback revision.
+     * Logic: Simulate a Skill write between the plan and complexity reads.
+     * Dependencies: Playwright routing and the live complexity endpoint.
+     */
+    async function advanceReviewRevision(route) {
+      const response = await route.fetch();
+      const envelope = await response.json();
+      envelope.data.items[0].feedback_revision += 1;
+      await route.fulfill({ response, json: envelope });
+    }
+    await hydrationPage.route(reviewPath, advanceReviewRevision, { times: 1 });
+    await hydrationPage.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(hydrationCard.getByText("Reload the saved plan before saving.", { exact: true })).toBeVisible();
+    await expect(hydrationCard.locator('button[type="submit"]')).toBeDisabled();
+    await hydrationCard.getByRole("button", { name: "Reload current record", exact: true }).click();
+    await expect(hydrationCard.getByRole("button", { name: "Save feedback and code", exact: true })).toBeEnabled();
+    await expect(hydrationCard.locator('[name="code"]')).toHaveValue(editedCode);
+    await expect(hydrationCard.locator('[name="input_definition"]')).toHaveValue(editedInput);
+    await hydrationPage.close();
+
+    card = await openCard(page, first);
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    await expect(card.locator('[name="code"]')).toHaveValue(syntheticCode);
+    skill(["feedback", "--attempt", first.attempt_id, "--submission", "synthetic-external-feedback", "--expected-revision", "2", "--kind", "correction", "--changes", JSON.stringify({ elapsed_minutes: 31 })]);
+    const externalCode = { code: "int identity(int n) { return n + 2; }", language: first.attempt.language, input_definition: "n is the revised input size" };
+    saveSkillCode(first, "synthetic-external-code", 3, externalCode);
+    await refresh.click();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("31");
+    await expect(card.locator('[name="code"]')).toHaveValue(externalCode.code);
+    await expect(card.locator('[name="input_definition"]')).toHaveValue(externalCode.input_definition);
+    await card.locator('[name="elapsed_minutes"]').fill("32");
+    await card.getByRole("button", { name: "Save feedback and code", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: `Saved feedback and code for ${first.problem.title}` })).toBeVisible();
+    const refreshedEvidence = skill(["review", "status", "--attempt", first.attempt_id]).items[0].evidence;
+    assert.equal(refreshedEvidence.feedback_revision, 4);
+    assert.deepEqual(refreshedEvidence.body, externalCode);
+    await expect(card.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await expect(card.locator('[name="code"]')).toHaveValue(externalCode.code);
+
+    const codeOnly = { ...externalCode, code: "int identity(int n) { return n + 3; }", input_definition: "n is the code-only input size" };
+    saveSkillCode(first, "synthetic-code-only-update", 4, codeOnly);
+    await refresh.click();
+    await expect(card.locator('[name="code"]')).toHaveValue(codeOnly.code);
+    await expect(card.locator('[name="input_definition"]')).toHaveValue(codeOnly.input_definition);
+    await expect(card.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+
+    skill(["feedback", "--attempt", first.attempt_id, "--submission", "synthetic-feedback-only-update", "--expected-revision", "4", "--changes", JSON.stringify({ elapsed_minutes: 33 })]);
+    await refresh.click();
+    await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("33");
+    await expect(card.locator('[name="code"]')).toHaveValue(codeOnly.code);
+    const reuseEarlierCode = card.getByRole("checkbox", { name: "Use code from the earlier feedback version", exact: true });
+    await expect(reuseEarlierCode).not.toBeChecked();
+    await card.locator('[name="elapsed_minutes"]').fill("34");
+    await card.getByRole("button", { name: "Save feedback", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: `Saved feedback for ${first.problem.title}` })).toBeVisible();
+    const earlierEvidence = skill(["review", "status", "--attempt", first.attempt_id]).items[0];
+    assert.equal(earlierEvidence.feedback_revision, 6);
+    assert.equal(earlierEvidence.evidence.feedback_revision, 4);
+    assert.equal(earlierEvidence.status, "stale");
+    await expect(card.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await reuseEarlierCode.check();
+    await card.getByRole("button", { name: "Save code", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: `Saved code for ${first.problem.title}` })).toBeVisible();
+    const explicitlyRebound = skill(["review", "status", "--attempt", first.attempt_id]).items[0];
+    assert.equal(explicitlyRebound.evidence.feedback_revision, 6);
+    assert.deepEqual(explicitlyRebound.evidence.body, codeOnly);
+
     const savedPlan = skill(["show", "--date", seeded.training_date]);
     assert.equal(savedPlan.items.length, 5);
     const missing = "2099-01-01";
@@ -338,7 +555,7 @@ async function main() {
     assert.equal(missingRead.status(), 404);
 
     await page.getByLabel("Training date", { exact: true }).fill(seeded.training_date);
-    await expect(page.locator(".problem-card")).toHaveCount(5);
+    await expectPlan(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: path.join(artifacts, "plan-mobile.png"), fullPage: true });
     /**
@@ -358,21 +575,19 @@ async function main() {
       assert.ok(size.height >= 44, `Result targets must be at least 44px tall, got ${size.height}.`);
       assert.ok(size.label >= 12 && size.detail >= 12, "Mobile result labels and details must be at least 12px.");
     }
-    const actionHeights = await page.locator(".record-button, .primary-button, .date-control input").evaluateAll(measureHeights);
+    const actionHeights = await page.locator(".plan-sidebar button, .primary-button, .date-control input").evaluateAll(measureHeights);
     for (const height of actionHeights) assert.ok(height >= 44, `Mobile actions must be at least 44px tall, got ${height}.`);
     await page.getByRole("button", { name: "Topic scores", exact: true }).click();
     await page.screenshot({ path: path.join(artifacts, "scores-mobile.png"), fullPage: true });
     assert.equal(await page.evaluate(fitsViewport), true, "Mobile scores must not overflow.");
     for (const width of [320, 768, 1440]) {
       await page.setViewportSize({ width, height: 844 });
-      await page.getByRole("button", { name: "Plan & records", exact: true }).click();
-      card = page.locator(`[data-attempt-id="${first.attempt_id}"]`);
-      if (await card.locator("form").count()) {
-        await card.getByRole("button", { name: `Close ${first.problem.title}`, exact: true }).click();
-      }
+      await page.getByRole("button", { name: "Training record", exact: true }).click();
+      await openCard(page, second);
       assert.equal(await page.evaluate(fitsViewport), true, `The plan must not overflow at ${width}px.`);
       card = await openCard(page, first);
-      assert.equal(await page.evaluate(fitsViewport), true, `The feedback form must not overflow at ${width}px.`);
+      await expect(card.locator('[name="code"]')).toBeVisible();
+      assert.equal(await page.evaluate(fitsViewport), true, `The feedback and code forms must not overflow at ${width}px.`);
       await page.getByRole("button", { name: "Topic scores", exact: true }).click();
       assert.equal(await page.evaluate(fitsViewport), true, `Topic scores must not overflow at ${width}px.`);
     }
@@ -392,12 +607,18 @@ async function main() {
       await expect(guardPage.locator(".problem-card")).toHaveCount(0);
     }
 
-    await page.getByRole("button", { name: "Plan & records", exact: true }).click();
+    await page.getByRole("button", { name: "Training record", exact: true }).click();
     card = await openCard(page, fourth);
     await card.getByRole("radio", { name: /Not yet AC/ }).check();
+    await page.keyboard.press("b");
+    await expect(card.getByRole("radio", { name: /AC with hints/ })).toBeChecked();
+    await page.keyboard.press("d");
+    await expect(card.getByRole("radio", { name: /Not yet AC/ })).toBeChecked();
     await card.locator('[name="elapsed_minutes"]').fill("15");
+    await page.keyboard.press("a");
+    await expect(card.getByRole("radio", { name: /Not yet AC/ })).toBeChecked();
     await guardPage.goto(session.web.url);
-    await expect(guardPage.locator(".problem-card")).toHaveCount(5);
+    await expectPlan(guardPage);
     const refreshCard = await openCard(guardPage, fourth);
     await refreshCard.getByRole("radio", { name: /Not yet AC/ }).check();
     await refreshCard.locator('[name="elapsed_minutes"]').fill("17");
@@ -406,6 +627,7 @@ async function main() {
     skill(["backup", "--output", path.join(copied, "coach.sqlite3")]);
     skill(["feedback", "--attempt", fifth.attempt_id, "--submission", "synthetic-clone-only", "--expected-revision", "0", "--changes", JSON.stringify({ result: "D", elapsed_minutes: 9 })], copied);
     const originalContext = await (await page.request.get(`${origin}/v1/context`)).json();
+    const originalFifthSummary = await guardPage.locator(`[data-plan-attempt-id="${fifth.attempt_id}"]`).textContent();
     stopServer();
     const copiedSession = startSession(copied, port);
     assert.equal(new URL(copiedSession.web.url).origin, origin);
@@ -416,7 +638,7 @@ async function main() {
     await expect(guardPage.getByRole("alert").filter({ hasText: "This is a different training workspace." }).first()).toBeVisible();
     await expect(refreshCard.locator('[name="elapsed_minutes"]')).toHaveValue("17");
     await expect(refreshCard.getByRole("button", { name: /Save feedback/ })).toBeDisabled();
-    await expect(guardPage.locator(`[data-attempt-id="${fifth.attempt_id}"]`)).toContainText("No result recorded");
+    await expect(guardPage.locator(`[data-plan-attempt-id="${fifth.attempt_id}"]`)).toHaveText(originalFifthSummary);
     await card.getByRole("button", { name: /Save feedback/ }).click();
     await expect(page.getByRole("alert").filter({ hasText: "This is a different training workspace." }).first()).toBeVisible();
     await expect(card.locator('[name="elapsed_minutes"]')).toHaveValue("15");
@@ -430,11 +652,12 @@ async function main() {
     await guardPage.goto(copiedSession.web.url);
     await expect(guardPage.getByRole("heading", { name: "Training record" })).toBeVisible();
     await expect(guardPage.getByLabel("Training date", { exact: true })).toHaveValue(trainingDate);
-    await expect(guardPage.locator(".problem-card")).toHaveCount(5);
-    await expect(guardPage.locator(`[data-attempt-id="${fifth.attempt_id}"]`)).toContainText("D · Not yet AC");
+    await expectPlan(guardPage);
+    const copiedCard = await openCard(guardPage, fifth);
+    await expect(copiedCard).toContainText("D · Not yet AC");
     await guardPage.close();
     assert.deepEqual(pageErrors, [], "The browser must have no uncaught runtime errors.");
-    process.stdout.write(`Standalone Skill startup, reuse, managed restart, browser saves, draft retention, conditional dates, recovery, scores, and store guards passed.\nScreenshots: ${artifacts}\n`);
+    process.stdout.write(`Standalone Skill startup, reuse, managed restart, shared feedback and code saves, evidence refresh, auto-advance, shortcuts, date steps, correction cancellation, complexity selection, draft retention, conditional dates, recovery, score charts, progress drill-down, and store guards passed.\nScreenshots: ${artifacts}\n`);
   } catch (failure) {
     if (page) await page.screenshot({ path: path.join(artifacts, "failure.png"), fullPage: true }).catch(ignoreScreenshotFailure);
     if (pageErrors.length) process.stderr.write(`Browser runtime errors: ${pageErrors.join("; ")}\n`);
@@ -496,6 +719,14 @@ function ignoreScreenshotFailure() {}
  * Dependencies: The deliberate hung-response fixture.
  */
 function ignoreRouteFailure() {}
+
+/**
+ * Inputs: Plain text such as a problem title.
+ * Outputs: The text with regular expression characters escaped.
+ * Logic: Prefix each special character with a backslash.
+ * Dependencies: None.
+ */
+function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 /**
  * Inputs: An immutable feedback revision.

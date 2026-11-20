@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from algorithm_coach.errors import CoachError
-from algorithm_coach.scoring import derive_topic_scores
+from algorithm_coach.scoring import derive_practice_progress, derive_topic_scores
 from algorithm_coach.service import Coach
 
 
@@ -210,6 +210,66 @@ class TopicScoreTests(unittest.TestCase):
         self.assertEqual((attempts, states), originals)
 
 
+class PracticeProgressTests(unittest.TestCase):
+    """Verify read-only daily activity and per-problem progress rows."""
+
+    def test_days_count_every_current_result_and_minutes(self) -> None:
+        """Group current results and minutes by practice date.
+
+        Inputs: A, D, E, and empty results on two days plus another language.
+        Outputs: Daily A-F counts and summed minutes for the selected language.
+        Logic: Count each attempt once and ignore unanswered or foreign attempts.
+        Dependencies: derive_practice_progress.
+        """
+        attempts = [
+            _attempt("a1", 1, "A", "2026-01-01", feedback={"result": "A", "elapsed_minutes": 20}),
+            _attempt("a2", 2, "D", "2026-01-01", feedback={"result": "D", "elapsed_minutes": 15.5}),
+            _attempt("a3", 3, "E", "2026-01-03"),
+            _attempt("a4", 4, None, "2026-01-03"),
+            _attempt("a5", 5, "A", "2026-01-02", language="Python"),
+        ]
+        progress = derive_practice_progress(attempts, _catalog(), "Java", [])
+        self.assertEqual([day["date"] for day in progress["days"]], ["2026-01-01", "2026-01-03"])
+        self.assertEqual(progress["days"][0]["results"], {"A": 1, "B": 0, "C": 0, "D": 1, "E": 0, "F": 0})
+        self.assertEqual(progress["days"][0]["minutes"], 35.5)
+        self.assertEqual(progress["days"][1]["results"]["E"], 1)
+        self.assertEqual(progress["basis"], "self_reported")
+
+    def test_problem_rows_reuse_latest_valid_result_and_saved_mastery(self) -> None:
+        """Report the newest A-D result per problem with saved stability.
+
+        Inputs: Two attempts on one problem, a later skip, and one stable state.
+        Outputs: One row with the newest A-D result, attempt count, and stability.
+        Logic: Match topic score evidence rules without creating mastery.
+        Dependencies: derive_practice_progress and synthetic catalog metadata.
+        """
+        attempts = [
+            _attempt("p1", 1, "D", "2026-01-01"),
+            _attempt("p2", 1, "A", "2026-01-02"),
+            _attempt("p3", 1, "F", "2026-01-03"),
+            _attempt("p4", 2, "E", "2026-01-03"),
+        ]
+        states = [{"problem_id": "leetcode:1", "language": "Java", "mastery_status": "stable"}]
+        progress = derive_practice_progress(attempts, _catalog(), "Java", states)
+        self.assertEqual(len(progress["problems"]), 1)
+        row = progress["problems"][0]
+        self.assertEqual((row["problem_id"], row["result"], row["practice_date"]), ("leetcode:1", "A", "2026-01-02"))
+        self.assertEqual(row["attempt_count"], 3)
+        self.assertTrue(row["stable"])
+        self.assertEqual(row["tags"], ["secondary", "shared"])
+
+    def test_invalid_language_is_rejected(self) -> None:
+        """Reject an empty language with the shared error.
+
+        Inputs: A blank language.
+        Outputs: A validation error.
+        Logic: Reuse the score language rule.
+        Dependencies: derive_practice_progress and CoachError.
+        """
+        with self.assertRaises(CoachError):
+            derive_practice_progress([], _catalog(), " ", [])
+
+
 class TopicScoreServiceTests(unittest.TestCase):
     """Verify score reads against the real local SQLite authority."""
 
@@ -294,6 +354,25 @@ class TopicScoreServiceTests(unittest.TestCase):
         topic = _topic(self.coach.get_topic_scores(), "array")
         self.assertIsNone(topic["score"])
         self.assertEqual(topic["problem_count"], 0)
+
+    def test_progress_reads_do_not_write_and_match_scores(self) -> None:
+        """Keep progress reads read-only and consistent with topic scores.
+
+        Inputs: One independent report and a progress read.
+        Outputs: Unchanged storage and one matching problem row.
+        Logic: Compare the authority before and after the derived query.
+        Dependencies: Coach.get_practice_progress and SQLite dump.
+        """
+        item = self.coach.ensure_plan("2026-01-01")["items"][0]
+        self.coach.submit_feedback(item["attempt_id"], "progress-read-only", 0, {"result": "A", "elapsed_minutes": 12}, occurred_at="2026-01-01T12:00:00+00:00")
+        connection = self.coach._db()
+        before = tuple(connection.iterdump())
+        progress = self.coach.get_practice_progress()
+        self.assertEqual(tuple(connection.iterdump()), before)
+        self.assertFalse(connection.in_transaction)
+        self.assertEqual(progress["state_version"], self.coach._state()["state_version"])
+        self.assertEqual(progress["days"], [{"date": "2026-01-01", "results": {"A": 1, "B": 0, "C": 0, "D": 0, "E": 0, "F": 0}, "minutes": 12}])
+        self.assertEqual([row["problem_id"] for row in progress["problems"]], [item["problem"]["id"]])
 
     def test_default_language_and_invalid_overrides(self) -> None:
         """Use saved defaults and validate optional language overrides.

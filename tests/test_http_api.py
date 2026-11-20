@@ -294,6 +294,10 @@ class HttpApiTests(unittest.TestCase):
         self._post(self._body())
         scored = self.client.get("/v1/scores?language=Java").json()["data"]
         self.assertTrue(any(topic["score"] == 100 for topic in scored["topics"]))
+        progress = self.client.get("/v1/progress?language=Java")
+        self.assertEqual(progress.status_code, 200)
+        self.assertEqual(progress.json()["data"]["basis"], "self_reported")
+        self.assertEqual(len(progress.json()["data"]["problems"]), 1)
 
     def test_feedback_requires_one_matching_store_identity(self) -> None:
         """Inputs: missing, foreign, duplicate, and correct store headers.
@@ -333,7 +337,7 @@ class HttpApiTests(unittest.TestCase):
             destination = client.get("/v1/context").json()["data"]
             self.assertEqual(source["workspace_id"], destination["workspace_id"])
             self.assertNotEqual(source["store_id"], destination["store_id"])
-            paths = ("/v1/context", "/v1/runtime", "/v1/plans/2026-01-02", "/v1/scores", "/v1/submissions/http-save")
+            paths = ("/v1/context", "/v1/runtime", "/v1/plans/2026-01-02", "/v1/scores", "/v1/progress", "/v1/submissions/http-save")
             for path in paths:
                 with self.subTest(path=path):
                     response = client.get(path, headers={"X-Coach-Store-Id": self.store_id})

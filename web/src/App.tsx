@@ -1,11 +1,14 @@
-/** File purpose: Read existing plans and connect record forms with topic scores. */
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { ApiError, errorMessage, request } from "./api";
-import { FeedbackForm, type EditorDraft } from "./FeedbackForm";
-import { ScoresView } from "./ScoresView";
-import type { Context, Plan, PlanItem, Receipt, Scores } from "./types";
-
-const RESULT_LABELS = { A: "Independent AC", B: "AC with hints", C: "AC after answer", D: "Not yet AC", E: "Deferred", F: "Skipped" };
+/** File purpose: Bind the session link to a store and connect plan, editor, and score views. */
+import { useEffect, useRef, useState } from "react";
+import { errorMessage, request } from "./api";
+import { ProblemCard } from "./components/ProblemCard";
+import { PlanSidebar } from "./components/PlanSidebar";
+import { ScoresView } from "./components/ScoresView";
+import type { SaveSummary } from "./components/AttemptEditor";
+import { isTrainingDate, shiftDate } from "./dates";
+import { createDraftStore } from "./drafts";
+import { useStoreResource } from "./hooks";
+import type { Context, Plan, PlanItem, Progress, Scores } from "./types";
 
 interface SessionLink {
   date: string | null;
@@ -13,16 +16,9 @@ interface SessionLink {
   error: string | null;
 }
 
-/**
- * Inputs: A candidate calendar date from a session link or date input.
- * Outputs: Whether the date is a real YYYY-MM-DD day supported by the core.
- * Logic: Reject malformed dates, year zero, and normalized invalid days.
- * Dependencies: The browser's ISO date parser.
- */
-function isTrainingDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-")) return false;
-  const parsed = new Date(`${value}T12:00:00Z`);
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+interface Notice {
+  tone: "success" | "warning";
+  text: string;
 }
 
 /**
@@ -47,82 +43,36 @@ function readSessionLink(): SessionLink {
 }
 
 /**
- * Inputs: A saved ISO training date.
- * Outputs: A locale-friendly day label without shifting its timezone.
- * Logic: Format the supplied date as calendar text, not a browser-local instant.
- * Dependencies: The standard date formatter.
+ * Inputs: A plan and the attempt that was just saved.
+ * Outputs: The next item without a result, or null.
+ * Logic: Search forward from the saved item and wrap around once.
+ * Dependencies: The saved plan order.
  */
-function displayDate(value: string): string {
-  return new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
-}
-
-/**
- * Inputs: None.
- * Outputs: The result reference for the plan toolbar.
- * Logic: Explain the six self-reported outcomes in one disclosure.
- * Dependencies: The core feedback meanings.
- */
-function ResultGuide() {
-  return <div className="guide-content"><p>Choose a result after each problem. Time and details are optional.</p>
-    <dl className="result-guide"><div><dt>A</dt><dd>Independent AC</dd></div><div><dt>B</dt><dd>AC with a hint</dd></div><div><dt>C</dt><dd>AC after the answer</dd></div><div><dt>D</dt><dd>Not yet AC</dd></div><div><dt>E</dt><dd>Defer until later</dd></div><div><dt>F</dt><dd>Skip this attempt</dd></div></dl>
-    <p className="guide-footnote">AC results are self-reported. Stable mastery needs spaced practice. E and F do not mean complete.</p></div>;
-}
-
-/**
- * Inputs: A plan item, bound store ID, editor state, and shared callbacks.
- * Outputs: One aligned problem row and its optional editor.
- * Logic: Show current evidence before editing a specific stable attempt.
- * Dependencies: FeedbackForm and the saved plan contract.
- */
-function ProblemCard({ item, storeId, drafts, open, locked, workspaceLocked, onOpen, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: {
-  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; open: boolean; locked: boolean; workspaceLocked: boolean; onOpen: (id: string) => void;
-  onSaved: (receipt: Receipt) => void; onPendingChange: (id: string | null) => void; onReload: () => void;
-  onWorkspaceMismatch: () => void;
-}) {
-  const feedback = item.attempt.feedback;
-  const result = feedback?.result;
-
+function nextOpenItem(plan: Plan, savedId: string): PlanItem | null {
+  const start = plan.items.findIndex(matchesId);
   /**
-   * Inputs: A click to open or close this card's editor.
-   * Outputs: The clicked attempt ID to the parent.
-   * Logic: Keep pending operations in their current mounted editor.
-   * Dependencies: onOpen and the shared lock state.
+   * Inputs: One plan item.
+   * Outputs: Whether it is the saved attempt.
+   * Logic: Compare stable attempt IDs.
+   * Dependencies: savedId.
    */
-  function toggleEditor() { if (!locked) onOpen(item.attempt_id); }
-
-  /**
-   * Inputs: A tag from this problem's metadata.
-   * Outputs: A compact metadata label.
-   * Logic: Render source tags without interpreting them as mastery.
-   * Dependencies: The saved problem metadata.
-   */
-  function renderTag(tag: string) { return <span key={tag} className="tag">{tag.replaceAll("-", " ")}</span>; }
-
-  return (
-    <article className={`problem-card ${open ? "open" : ""}`} data-attempt-id={item.attempt_id}>
-      <div className="problem-header"><span className="problem-number">{String(item.position).padStart(2, "0")}</span>
-        <div className="problem-content"><h2><a href={item.problem.url} target="_blank" rel="noreferrer">{item.problem.title}<span aria-hidden="true"> ↗</span></a></h2>
-          <div className="problem-meta"><span className={`difficulty ${item.problem.difficulty}`}>{item.problem.difficulty}</span><span>{item.problem.id.replace("leetcode:", "#")}</span><span className="reason-label">{item.reason.replaceAll("_", " ")}</span><span className="attempt-language">{item.attempt.language}</span><span className="problem-tags">{item.problem.tags.map(renderTag)}</span></div>
-        </div>
-        <div className="problem-status"><span className={`status-dot ${result ? `result-${result}` : ""}`} aria-hidden="true" />
-          <span>{result ? `${result} · ${RESULT_LABELS[result]}` : "No result recorded"}</span>
-        </div>
-        <div className="problem-time">{feedback?.elapsed_minutes != null ? <>{feedback.elapsed_minutes} <span className="time-unit">min</span></> : <><span aria-hidden="true">—</span><span className="sr-only">Time not recorded</span></>}</div>
-        <button type="button" className={`record-button ${open ? "active" : ""}`} onClick={toggleEditor} disabled={locked} aria-expanded={open} aria-controls={`editor-${item.attempt_id}`} aria-label={`${open ? "Close" : feedback ? "Update record for" : "Record result for"} ${item.problem.title}`}>{open ? "Close" : feedback ? "Update record" : "Record result"}<span aria-hidden="true">{open ? " −" : " +"}</span></button>
-      </div>
-      <div id={`editor-${item.attempt_id}`} hidden={!open}>{open && <FeedbackForm key={`${storeId}:${item.attempt_id}:${item.attempt.revision}`} item={item} storeId={storeId} drafts={drafts} workspaceLocked={workspaceLocked} onSaved={onSaved} onPendingChange={onPendingChange} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />}</div>
-    </article>
-  );
+  function matchesId(item: PlanItem) { return item.attempt_id === savedId; }
+  for (let step = 1; step < plan.items.length; step += 1) {
+    const item = plan.items[(start + step) % plan.items.length];
+    if (!item.attempt.feedback?.result) return item;
+  }
+  return null;
 }
 
 /**
  * Inputs: None.
  * Outputs: The local application's plan and topic-score views.
- * Logic: Validate the session link, bind its store and date, and refresh after receipts.
- * Dependencies: React, browser fetch, FeedbackForm, and ScoresView.
+ * Logic: Validate the session link, bind its store and date, and refresh after saves.
+ *   Scores load only when their view is open.
+ * Dependencies: React, PlanSidebar, ProblemCard, ScoresView, and useStoreResource.
  */
 export function App() {
-  const drafts = useRef(new Map<string, EditorDraft>());
+  const drafts = useRef(createDraftStore());
   const [sessionLink] = useState<SessionLink>(readSessionLink);
   const [context, setContext] = useState<Context | null>(null);
   const [startupError, setStartupError] = useState<{ title: string; message: string } | null>(
@@ -131,17 +81,35 @@ export function App() {
   const [workspaceLost, setWorkspaceLost] = useState(false);
   const [tab, setTab] = useState<"plan" | "scores">("plan");
   const [trainingDate, setTrainingDate] = useState("");
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [scores, setScores] = useState<Scores | null>(null);
-  const [planLoading, setPlanLoading] = useState(true);
-  const [scoresLoading, setScoresLoading] = useState(true);
-  const [planError, setPlanError] = useState<string | null>(null);
-  const [scoresError, setScoresError] = useState<string | null>(null);
   const [activeAttempt, setActiveAttempt] = useState<string | null>(null);
   const [blockingAttempt, setBlockingAttempt] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [advanceFrom, setAdvanceFrom] = useState<{ id: string; title: string; token: number } | null>(null);
   const locked = blockingAttempt !== null || workspaceLost;
+  const storeId = context?.store_id ?? null;
+
+  /**
+   * Inputs: None.
+   * Outputs: A locked page that keeps drafts and refuses the new store.
+   * Logic: Require a fresh Skill session link.
+   * Dependencies: Shared navigation state.
+   */
+  function handleWorkspaceMismatch() { setWorkspaceLost(true); setNotice(null); }
+
+  const plan = useStoreResource<Plan>({
+    path: trainingDate ? `/v1/plans/${encodeURIComponent(trainingDate)}` : null, storeId,
+    enabled: tab === "plan" && !workspaceLost, refreshToken, onMismatch: handleWorkspaceMismatch,
+  });
+  const scores = useStoreResource<Scores>({
+    path: context ? `/v1/scores?language=${encodeURIComponent(context.language)}` : null, storeId,
+    enabled: tab === "scores" && !workspaceLost, refreshToken, onMismatch: handleWorkspaceMismatch,
+  });
+  const progress = useStoreResource<Progress>({
+    path: context ? `/v1/progress?language=${encodeURIComponent(context.language)}` : null, storeId,
+    enabled: tab === "scores" && !workspaceLost, refreshToken, onMismatch: handleWorkspaceMismatch,
+  });
 
   /**
    * Inputs: The initial component mount.
@@ -192,69 +160,21 @@ export function App() {
   useEffect(loadContextEffect, [sessionLink]);
 
   /**
-   * Inputs: The server context, selected date, and explicit refresh token.
-   * Outputs: Fresh plan and score data or independent visible errors.
-   * Logic: Retain drafts during refresh, read existing plans, and cancel obsolete reads.
-   * Dependencies: The plan and scores endpoints.
+   * Inputs: A refreshed plan after a save.
+   * Outputs: The next open problem selected when auto-advance is on.
+   * Logic: Wait for the refresh that follows the save before moving.
+   * Dependencies: nextOpenItem and the plan resource.
    */
-  function loadViewsEffect() {
-    if (!context || workspaceLost) return;
-    if (!trainingDate) {
-      setPlanLoading(false); setScoresLoading(false); setPlanError(null);
-      return;
+  function advanceEffect() {
+    if (!advanceFrom || plan.loading || !plan.data || advanceFrom.token !== refreshToken) return;
+    const next = nextOpenItem(plan.data, advanceFrom.id);
+    if (next) {
+      setActiveAttempt(next.attempt_id);
+      setNotice({ tone: "success", text: `Saved ${advanceFrom.title} · Now on ${next.problem.title}` });
     }
-    const controller = new AbortController();
-    setPlanLoading(true); setScoresLoading(true); setPlanError(null); setScoresError(null);
-    /**
-     * Inputs: None.
-     * Outputs: The selected existing plan, or an empty-plan state.
-     * Logic: Treat a missing plan as missing without generating one.
-     * Dependencies: request and the selected training date.
-     */
-    async function loadPlan() {
-      try {
-        const saved = await request<Plan>(`/v1/plans/${encodeURIComponent(trainingDate)}`, { signal: controller.signal, headers: { "X-Coach-Store-Id": context!.store_id } });
-        if (!controller.signal.aborted) setPlan(saved);
-      } catch (failure) {
-        if (!controller.signal.aborted) {
-          if (failure instanceof ApiError && failure.code === "workspace_mismatch") handleWorkspaceMismatch();
-          else if (failure instanceof ApiError && failure.status === 404) setPlan(null);
-          else setPlanError(errorMessage(failure));
-        }
-      } finally {
-        if (!controller.signal.aborted) setPlanLoading(false);
-      }
-    }
-    /**
-     * Inputs: None.
-     * Outputs: Current topic evidence for the configured language.
-     * Logic: Refresh scores independently from missing or failed plan reads.
-     * Dependencies: request and the saved language.
-     */
-    async function loadScores() {
-      try {
-        const saved = await request<Scores>(`/v1/scores?language=${encodeURIComponent(context!.language)}`, { signal: controller.signal, headers: { "X-Coach-Store-Id": context!.store_id } });
-        if (!controller.signal.aborted) setScores(saved);
-      } catch (failure) {
-        if (!controller.signal.aborted) {
-          if (failure instanceof ApiError && failure.code === "workspace_mismatch") handleWorkspaceMismatch();
-          else setScoresError(errorMessage(failure));
-        }
-      } finally {
-        if (!controller.signal.aborted) setScoresLoading(false);
-      }
-    }
-    /**
-     * Inputs: An effect cleanup after a date or refresh change.
-     * Outputs: Cancellation of both old reads.
-     * Logic: Keep slower prior responses from replacing newer data.
-     * Dependencies: AbortController.
-     */
-    function cancelViews() { controller.abort(); }
-    void loadPlan(); void loadScores();
-    return cancelViews;
+    setAdvanceFrom(null);
   }
-  useEffect(loadViewsEffect, [context, trainingDate, refreshToken, workspaceLost]);
+  useEffect(advanceEffect, [advanceFrom, plan.loading, plan.data, refreshToken]);
 
   /**
    * Inputs: A plan-tab click.
@@ -273,51 +193,61 @@ export function App() {
   function showScores() { if (!locked) setTab("scores"); }
 
   /**
-   * Inputs: An explicit calendar date selection.
+   * Inputs: A selected calendar date or an empty value.
    * Outputs: A different existing plan request.
    * Logic: Accept a real calendar date without using the browser clock.
-   * Dependencies: The date input and pending lock.
+   * Dependencies: isTrainingDate and the pending lock.
    */
-  function changeDate(event: ChangeEvent<HTMLInputElement>) {
-    if (locked) return;
-    const selected = event.currentTarget.value;
-    if (selected !== "" && !isTrainingDate(selected)) return;
-    setTrainingDate(selected); setPlan(null); setActiveAttempt(null); setNotice(null);
+  function changeDate(selected: string) {
+    if (locked || (selected !== "" && !isTrainingDate(selected))) return;
+    setTrainingDate(selected); setActiveAttempt(null); setNotice(null); setAdvanceFrom(null);
   }
 
   /**
-   * Inputs: A clicked practice attempt ID.
-   * Outputs: The opened editor or a closed editor.
-   * Logic: Keep exactly one record editor visible.
-   * Dependencies: The current editor and pending state.
+   * Inputs: A number of days.
+   * Outputs: The shifted training date.
+   * Logic: Shift the calendar date, not a browser-local time.
+   * Dependencies: shiftDate and changeDate.
    */
-  function toggleAttempt(id: string) { if (!locked) setActiveAttempt(activeAttempt === id ? null : id); }
+  function shiftTrainingDate(days: number) { if (trainingDate) changeDate(shiftDate(trainingDate, days)); }
+
+  /**
+   * Inputs: A Today click.
+   * Outputs: The workspace's current training date.
+   * Logic: Use the server's configured timezone date.
+   * Dependencies: The loaded context.
+   */
+  function goToday() { if (context) changeDate(context.training_date); }
+
+  /**
+   * Inputs: A clicked practice attempt ID.
+   * Outputs: The selected editor in the detail area.
+   * Logic: Keep one editor visible and preserve drafts for other attempts.
+   * Dependencies: The pending lock and retained drafts.
+   */
+  function selectAttempt(id: string) { if (!locked) { setActiveAttempt(id); setNotice(null); } }
 
   /**
    * Inputs: The attempt with an uncertain operation, or null after resolution.
    * Outputs: The shared navigation lock.
    * Logic: Prevent a pending request from being unmounted or replaced.
-   * Dependencies: FeedbackForm save callbacks.
+   * Dependencies: AttemptEditor save callbacks.
    */
   function handlePendingChange(id: string | null) { setBlockingAttempt(id); }
 
   /**
-   * Inputs: A rejected request bound to the original training store.
-   * Outputs: A workspace warning and locked navigation without adopting new data.
-   * Logic: Keep the current draft visible and require a fresh Skill session link.
-   * Dependencies: Store-bound API errors and shared navigation state.
+   * Inputs: A verified save summary.
+   * Outputs: A notice, fresh data, and an optional move to the next problem.
+   * Logic: Acknowledge what was committed first, then read updated authority data.
+   * Dependencies: Refresh state and the auto-advance setting.
    */
-  function handleWorkspaceMismatch() { setWorkspaceLost(true); setNotice(null); }
-
-  /**
-   * Inputs: A verified committed feedback receipt.
-   * Outputs: A saved notification and fresh plan and score requests.
-   * Logic: Acknowledge persistence first, then read updated authority data.
-   * Dependencies: The receipt and view-refresh state.
-   */
-  function handleSaved(receipt: Receipt) {
-    setNotice(`Saved to your record · revision ${receipt.revision}`);
-    setRefreshToken(refreshToken + 1);
+  function handleSaved(summary: SaveSummary) {
+    const token = refreshToken + 1;
+    const parts = [summary.feedbackSaved ? "feedback" : "", summary.codeSaved ? "code" : ""].filter(Boolean).join(" and ");
+    if (summary.codeError) setNotice({ tone: "warning", text: `Feedback saved. Code was not saved: ${summary.codeError} Review the code in the editor before saving again.` });
+    else setNotice({ tone: "success", text: `Saved ${parts} for ${summary.title}` });
+    if (autoAdvance && summary.feedbackSaved && summary.result && !summary.codeError) setAdvanceFrom({ id: summary.attemptId, title: summary.title, token });
+    setRefreshToken(token);
   }
 
   /**
@@ -326,55 +256,59 @@ export function App() {
    * Logic: Discard stale editing context only after the user requests reload.
    * Dependencies: The shared pending lock and refresh token.
    */
-  function reloadRecords() { if (!locked) { setNotice(null); setRefreshToken(refreshToken + 1); } }
-
-  /**
-   * Inputs: One published plan item.
-   * Outputs: A keyed problem card with its own revision-bound form.
-   * Logic: Keep form identity tied to the saved attempt, not its list position.
-   * Dependencies: ProblemCard and the app callbacks.
-   */
-  function renderProblem(item: PlanItem) {
-    return <ProblemCard key={item.attempt_id} item={item} storeId={context!.store_id} drafts={drafts.current} open={activeAttempt === item.attempt_id} locked={locked} workspaceLocked={workspaceLost}
-      onOpen={toggleAttempt} onSaved={handleSaved} onPendingChange={handlePendingChange} onReload={reloadRecords} onWorkspaceMismatch={handleWorkspaceMismatch} />;
+  function reloadRecords() {
+    if (locked) return;
+    setNotice(null);
+    setRefreshToken(nextToken);
   }
 
-  let recordedCount = 0;
-  if (plan) for (const item of plan.items) if (item.attempt.feedback?.result) recordedCount += 1;
+  /**
+   * Inputs: The previous refresh token.
+   * Outputs: The next token.
+   * Logic: Use a functional update so rapid clicks are not lost.
+   * Dependencies: None.
+   */
+  function nextToken(previous: number) { return previous + 1; }
+
+  const planData = plan.data;
+  let selectedItem = planData?.items[0] ?? null;
+  if (planData && activeAttempt) for (const item of planData.items) {
+    if (item.attempt_id === activeAttempt) { selectedItem = item; break; }
+  }
+  const planMissing = Boolean(trainingDate) && plan.missing && !plan.loading;
 
   return (
     <div className="app-shell">
-      <header className="app-header"><div className="brand"><span className="brand-mark" aria-hidden="true">a<span>c</span></span><span>algorithm<span className="brand-light">coach</span></span></div>
-        <div className="header-detail"><span className="local-dot" />Local workspace{context && <><span className="header-divider">/</span><span>{context.language}</span></>}</div>
+      <header className="app-header"><div className="brand">Algorithm Coach</div>
+        <div className="header-detail"><span className="local-dot" />Local workspace{context && <><span className="header-divider">/</span><span>{context.language}</span><span className="header-divider">/</span><span>{context.timezone}</span></>}</div>
       </header>
-      <div className="navigation-row"><nav className="view-tabs" aria-label="Views"><button type="button" aria-current={tab === "plan" ? "page" : undefined} className={tab === "plan" ? "selected" : ""} onClick={showPlan} disabled={locked}>Plan &amp; records</button><button type="button" aria-current={tab === "scores" ? "page" : undefined} className={tab === "scores" ? "selected" : ""} onClick={showScores} disabled={locked}>Topic scores</button></nav>
-        {context && <span className="timezone-label">{context.timezone}</span>}
-      </div>
-      <main>
+      <div className="navigation-row"><nav className="view-tabs" aria-label="Views"><button type="button" aria-current={tab === "plan" ? "page" : undefined} className={tab === "plan" ? "selected" : ""} onClick={showPlan} disabled={locked}>Training record</button><button type="button" aria-current={tab === "scores" ? "page" : undefined} className={tab === "scores" ? "selected" : ""} onClick={showScores} disabled={locked}>Topic scores</button></nav></div>
+      <main className="app-main">
         {startupError && <div className="empty-state startup-error" role="alert"><span className="empty-icon" aria-hidden="true">!</span><h1>{startupError.title}</h1><p>{startupError.message}</p></div>}
         {!context && !startupError && <div className="loading-panel" role="status">Opening your practice record…</div>}
         {workspaceLost && <div className="message error" role="alert"><strong>This is a different training workspace.</strong><p>Your draft remains here. Start a new session in your Skill and use its feedback link. This page will not switch databases.</p></div>}
-        {context && tab === "scores" && <ScoresView scores={scores} loading={scoresLoading} error={scoresError} />}
+        {context && tab === "scores" && <div className="scores-view"><ScoresView scores={scores} progress={progress} today={context.training_date} /></div>}
         {context && tab === "plan" && <>
-          <div className="view-heading"><div><h1>Training record</h1><p className="view-description">{trainingDate ? displayDate(trainingDate) : "Choose a date to read its saved plan"}</p></div>
-            <label className="date-control"><span>Training date</span><input aria-label="Training date" type="date" min="0001-01-01" max="9999-12-31" value={trainingDate} onChange={changeDate} disabled={locked} /></label>
-          </div>
-          {notice && <div className="message success" role="status"><span className="success-check" aria-hidden="true">✓</span>{notice}</div>}
-          <div className="plan-layout"><div className="plan-column">
-            <div className="plan-toolbar"><div className="section-heading"><h2>Saved plan</h2><p>{plan ? `${plan.items.length} problems · ${recordedCount} with a result` : "Your saved daily plan"}</p></div>
-              <div className="plan-tools"><button type="button" className="text-button" onClick={reloadRecords} disabled={locked || planLoading || !trainingDate}>Refresh</button></div>
-              <details className="result-help"><summary>Result guide <span>A–F</span></summary><ResultGuide /></details>
+          <h1 className="sr-only">Training record</h1>
+          <div className="plan-layout">
+            <PlanSidebar trainingDate={trainingDate} today={context.training_date} plan={planData} selectedId={selectedItem?.attempt_id ?? null}
+              locked={locked} loading={plan.loading} autoAdvance={autoAdvance} onDateChange={changeDate} onShiftDate={shiftTrainingDate}
+              onToday={goToday} onSelect={selectAttempt} onRefresh={reloadRecords} onAutoAdvanceChange={setAutoAdvance} />
+            <div className="plan-detail">
+              {notice && <div className={`message ${notice.tone}`} role="status">{notice.tone === "success" && <span className="success-check" aria-hidden="true">✓</span>}{notice.text}</div>}
+              {plan.error && <div className="message error" role="alert"><strong>The plan could not be read.</strong><p>{plan.error}</p></div>}
+              {plan.loading && <div className="loading-panel compact" role="status">{planData ? "Refreshing the saved plan…" : "Reading the saved plan…"}</div>}
+              {!trainingDate && !plan.loading && <div className="empty-state"><h2>Choose a training date</h2><p>Select a date to read its existing plan.</p></div>}
+              {planMissing && <div className="empty-state"><h2>No saved plan for this date</h2><p>Ask your Algorithm Coach Skill to generate a plan.<br />Then refresh here to record your practice.</p></div>}
+              {planData && <>
+                {Boolean(planData.current_policy_conflicts?.length) && <div className="message warning"><strong>This saved plan has a scope conflict.</strong><p>Review it in your Skill. Its published items have been preserved.</p></div>}
+                {!selectedItem && !plan.loading && <div className="empty-state"><h2>No problems in this saved plan</h2><p>Review the plan in your Algorithm Coach Skill.</p></div>}
+                {selectedItem && <ProblemCard key={selectedItem.attempt_id} item={selectedItem} storeId={context.store_id} drafts={drafts.current}
+                  planCurrent={plan.dataToken === refreshToken && planData.training_date === trainingDate} workspaceLocked={workspaceLost}
+                  onSaved={handleSaved} onPendingChange={handlePendingChange} onReload={reloadRecords} onWorkspaceMismatch={handleWorkspaceMismatch} />}
+              </>}
             </div>
-            {planError && <div className="message error" role="alert"><strong>The plan could not be read.</strong><p>{planError}</p></div>}
-            {planLoading && <div className="loading-panel" role="status">{plan ? "Refreshing the saved plan…" : "Reading the saved plan…"}</div>}
-            {!trainingDate && !planLoading && <div className="empty-state"><h2>Choose a training date</h2><p>Select a date to read its existing plan.</p></div>}
-            {trainingDate && !planLoading && !plan && !planError && <div className="empty-state"><h2>No saved plan for this date</h2><p>Ask your Algorithm Coach Skill to generate a plan.<br />Then refresh here to record your practice.</p></div>}
-            {plan && <>
-              {Boolean(plan.current_policy_conflicts?.length) && <div className="message warning"><strong>This saved plan has a scope conflict.</strong><p>Review it in your Skill. Its published items have been preserved.</p></div>}
-              {plan.items.length > 0 && <div className="problem-list-heading" aria-hidden="true"><span>#</span><span>Problem</span><span>Result</span><span>Time</span><span>Record</span></div>}
-              <div className="problem-list">{plan.items.map(renderProblem)}</div>
-            </>}
-          </div></div>
+          </div>
         </>}
       </main>
       <footer className="app-footer"><span>Drafts stay in this page until you reload or close it</span><span>Local records · Self-reported evidence</span></footer>
