@@ -52,7 +52,7 @@ class SessionTests(unittest.TestCase):
         Dependencies: The session CLI and a mocked process boundary.
         """
         runtime = {"status": "ready", "action": "started", "url": "http://127.0.0.1:8765/", "store_id": "a" * 64}
-        with patch("algorithm_coach.web_runtime.ensure_web", return_value=runtime) as ensure:
+        with patch("algorithm_coach.web.runtime.ensure_web", return_value=runtime) as ensure:
             first = self.run_cli(["start-session", "--date", "2026-01-01"])
             second = self.run_cli(["start-session", "--date", "2026-01-01"])
         self.assertEqual(ensure.call_count, 2)
@@ -66,7 +66,7 @@ class SessionTests(unittest.TestCase):
         Logic: Keep fallback explicit while ordinary core calls have no runtime effects.
         Dependencies: The CLI and a mocked process boundary.
         """
-        with patch("algorithm_coach.web_runtime.ensure_web", return_value={"status": "unavailable", "reason": "dependencies_missing", "url": None}) as ensure:
+        with patch("algorithm_coach.web.runtime.ensure_web", return_value={"status": "unavailable", "reason": "dependencies_missing", "url": None}) as ensure:
             self.run_cli(["plan", "--date", "2026-01-01"])
             self.assertFalse(ensure.called)
             session = self.run_cli(["start-session", "--date", "2026-01-01"])
@@ -86,7 +86,7 @@ class SessionTests(unittest.TestCase):
         assets = base / "ui"
         write_ui(assets)
         output = base / "bundle"
-        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "build_skill.py"),
+        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "packaging" / "build_skill.py"),
                                  "--output", str(output), "--with-web", "--web-assets", str(assets)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -100,7 +100,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["data"]["web"]["status"], "disabled")
         (assets / "app.js").write_text("modified", encoding="utf-8")
         rejected = base / "rejected"
-        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "build_skill.py"),
+        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "packaging" / "build_skill.py"),
                                  "--output", str(rejected), "--with-web", "--web-assets", str(assets)],
                                 capture_output=True, text=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)
@@ -121,7 +121,7 @@ class SessionTests(unittest.TestCase):
         (outside / "synthetic-private-note.txt").write_text("Synthetic fixture only.", encoding="utf-8")
         (assets / "unlisted").symlink_to(outside, target_is_directory=True)
         destination = base / "rejected-link-bundle"
-        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "build_skill.py"),
+        result = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "packaging" / "build_skill.py"),
                                  "--output", str(destination), "--with-web", "--web-assets", str(assets)],
                                 capture_output=True, text=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)

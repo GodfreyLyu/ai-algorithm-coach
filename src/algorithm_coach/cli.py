@@ -237,7 +237,7 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
         if args.no_web:
             web = {"status": "disabled", "action": "none", "reason": "disabled", "url": None}
         else:
-            from .web_runtime import ensure_web
+            from .web.runtime import ensure_web
 
             web = ensure_web(Path(args.data_dir).expanduser(), python=args.web_python,
                              static_dir=args.web_static_dir, preferred_port=args.web_port)
@@ -246,7 +246,7 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
             web = {**web, "url": web["url"].rstrip("/") + "/?" + query}
         return {"plan": plan, "web": web}
     if args.command == "web":
-        from .web_runtime import stop_web, web_status
+        from .web.runtime import stop_web, web_status
 
         coach.close()
         operation = web_status if args.web_command == "status" else stop_web

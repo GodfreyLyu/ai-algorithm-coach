@@ -31,10 +31,29 @@ The application service owns transactions, versions, and idempotency.
 Rules choose candidates and derive learning state.
 Storage owns schema, consistency checks, and backups.
 
-`schema.py` defines the complete current data contract. `storage.py` handles
-connections and transactions. `records.py` reads native practice context, history,
-and checkpoints. The learning rules consume these records without storage-format
-branches. CLI and HTTP adapters call the same application service.
+## Package layout
+
+The package `src/algorithm_coach/` has three subpackages.
+
+```text
+algorithm_coach/
+  cli.py, service.py, errors.py   Entry point, application service, shared errors
+  core/    rules, policies, scoring, training_profile, catalog, catalog_validation
+  store/   schema, storage, records, policy_store, complexity
+  web/     http_api, identity, runtime, server
+```
+
+`core/` holds training decisions. It does not open databases or perform I/O.
+`store/` holds the SQLite schema, transactions, and the `Coach` mixins that persist
+records. `service.py` combines both layers into one `Coach` service.
+`web/` is the optional local adapter. Only this package imports Web dependencies.
+The CLI loads `web.runtime` only for interactive session commands.
+
+`store/schema.py` defines the complete current data contract. `store/storage.py`
+handles connections and transactions. `store/records.py` reads native practice
+context, history, and checkpoints. The learning rules consume these records
+without storage-format branches. CLI and HTTP adapters call the same application
+service.
 
 ## Authority and execution
 

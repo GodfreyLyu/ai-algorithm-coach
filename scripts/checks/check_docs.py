@@ -99,7 +99,7 @@ def main() -> int:
     Logic: Print failures or one success message.
     Dependencies: check, pathlib, and stdout.
     """
-    failures = check(Path(__file__).resolve().parents[1])
+    failures = check(Path(__file__).resolve().parents[2])
     for failure in failures:
         print(failure)
     if not failures:

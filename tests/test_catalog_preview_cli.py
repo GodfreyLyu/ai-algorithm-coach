@@ -121,7 +121,7 @@ class CatalogPreviewCommandTests(unittest.TestCase):
         """
         bundle = self.base / "algorithm-coach"
         built = subprocess.run(
-            [sys.executable, "-S", str(ROOT / "scripts" / "build_skill.py"), "--output", str(bundle)],
+            [sys.executable, "-S", str(ROOT / "scripts" / "packaging" / "build_skill.py"), "--output", str(bundle)],
             cwd=self.base, capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(built.returncode, 0, built.stdout + built.stderr)

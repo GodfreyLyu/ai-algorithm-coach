@@ -8,9 +8,9 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from algorithm_coach.errors import CoachError
-from algorithm_coach.policies import default_policy
-from algorithm_coach.rules import default_config, derive_learning_state, merge_feedback, select_candidates, validate_config
-from algorithm_coach.training_profile import assessment_version, learning_outcome, primary_framework, timebox, validate_training_context
+from algorithm_coach.core.policies import default_policy
+from algorithm_coach.core.rules import default_config, derive_learning_state, merge_feedback, select_candidates, validate_config
+from algorithm_coach.core.training_profile import assessment_version, learning_outcome, primary_framework, timebox, validate_training_context
 
 
 def _catalog() -> list[dict]:

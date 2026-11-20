@@ -3,7 +3,7 @@
 from copy import deepcopy
 import re
 
-from .errors import CoachError
+from ..errors import CoachError
 
 CATALOG_METADATA_FIELDS = ("id", "title", "difficulty", "tags", "url")
 DIFFICULTIES = ("easy", "medium", "hard")

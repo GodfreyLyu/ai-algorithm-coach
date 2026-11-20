@@ -11,9 +11,9 @@ import socket
 import stat
 from uuid import uuid4
 
-from . import __version__
-from .web_identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, inspect_ui, workspace_identity
-from .web_runtime import _directory, _file_lock, _remove_descriptor, _runtime_directory, _write_descriptor
+from .. import __version__
+from .identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, inspect_ui, workspace_identity
+from .runtime import _directory, _file_lock, _remove_descriptor, _runtime_directory, _write_descriptor
 
 
 def _logging(directory: Path) -> None:

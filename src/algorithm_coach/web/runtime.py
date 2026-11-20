@@ -15,9 +15,9 @@ import time
 import tomllib
 from uuid import UUID, uuid4
 
-from . import __version__
-from .errors import CoachError
-from .web_identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, inspect_ui, store_id, workspace_identity
+from .. import __version__
+from ..errors import CoachError
+from .identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, inspect_ui, store_id, workspace_identity
 
 try:
     import fcntl
@@ -325,7 +325,7 @@ def _settings(data_dir: Path, python: str | None, static_dir: Path | None, prefe
     port = preferred_port if preferred_port is not None else settings.get("port", 8765)
     if type(enabled) is not bool or type(port) is not int or not 0 <= port <= 65535:
         raise CoachError("web_config_invalid", "Use a boolean enabled flag and a valid local port.")
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     chosen_python = python or os.environ.get("ALGORITHM_COACH_WEB_PYTHON") or settings.get("python")
     if chosen_python is None:
         local_python = root / ".venv-web" / "bin" / "python"
@@ -374,12 +374,12 @@ def _launch(data_dir: Path, settings: dict) -> subprocess.Popen:
     Outputs: one detached child process handle.
 
     Logic: pass argument arrays and this distribution's import root without a shell.
-    Dependencies: subprocess, the optional interpreter, and web_server.
+    Dependencies: subprocess, the optional interpreter, and web.server.
     """
     environment = dict(os.environ)
-    environment["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    arguments = [settings["python"], "-m", "algorithm_coach.web_server", "--data-dir", str(data_dir),
+    arguments = [settings["python"], "-m", "algorithm_coach.web.server", "--data-dir", str(data_dir),
                  "--static-dir", str(settings["static_dir"]), "--port", str(settings["port"])]
     return subprocess.Popen(arguments, cwd=data_dir, env=environment, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

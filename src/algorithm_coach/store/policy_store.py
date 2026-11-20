@@ -4,10 +4,10 @@ from datetime import date, datetime, timedelta, timezone
 import re
 from uuid import uuid4
 
-from .catalog_validation import CATALOG_METADATA_FIELDS, validate_catalog
-from .errors import CoachError
-from .policies import default_policy, eligibility, filter_catalog, policy_active, validate_plan_candidates, validate_policy
-from .rules import select_candidates
+from ..core.catalog_validation import CATALOG_METADATA_FIELDS, validate_catalog
+from ..errors import CoachError
+from ..core.policies import default_policy, eligibility, filter_catalog, policy_active, validate_plan_candidates, validate_policy
+from ..core.rules import select_candidates
 from . import storage
 
 

@@ -32,8 +32,8 @@ Run from the repository root:
 ```sh
 python3.12 -m compileall -q src scripts skills tests
 python3.12 -m unittest discover -s tests -v
-python3.12 scripts/check_comments.py
-python3.12 scripts/check_docs.py
+python3.12 scripts/checks/check_comments.py
+python3.12 scripts/checks/check_docs.py
 ```
 
 For Web changes, run the optional environment and browser checks in

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from algorithm_coach.errors import CoachError
 from algorithm_coach.service import Coach
-from algorithm_coach import storage
+from algorithm_coach.store import storage
 
 
 class CurrentStorageTests(unittest.TestCase):

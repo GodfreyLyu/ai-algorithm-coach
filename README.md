@@ -196,7 +196,7 @@ has been checked. A timeout does not prove that a write failed.
 Build into a new directory. The builder refuses to replace an existing destination.
 
 ```sh
-python3.12 scripts/build_skill.py --output /path/to/new/algorithm-coach
+python3.12 scripts/packaging/build_skill.py --output /path/to/new/algorithm-coach
 ```
 
 The output includes `SKILL.md`, the entry script, and the Python core.
@@ -258,8 +258,8 @@ No third-party test dependency is required.
 
 ```sh
 python3.12 -m unittest discover -s tests -v
-python3.12 scripts/check_comments.py
-python3.12 scripts/check_docs.py
+python3.12 scripts/checks/check_comments.py
+python3.12 scripts/checks/check_docs.py
 ```
 
 Tests use synthetic records in temporary directories.

@@ -14,7 +14,7 @@ def main() -> int:
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     try:
-        from algorithm_coach.http_api import main as run_web
+        from algorithm_coach.web.http_api import main as run_web
     except ModuleNotFoundError as exc:
         if exc.name not in {"fastapi", "pydantic", "uvicorn"}:
             raise

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from .errors import CoachError
+from ..errors import CoachError
 
 SCORE_VERSION = "1"
 PROGRESS_VERSION = "1"

@@ -19,8 +19,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from algorithm_coach.service import Coach
-from algorithm_coach import web_runtime
-from algorithm_coach.web_identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, workspace_identity
+from algorithm_coach.web import runtime as web_runtime
+from algorithm_coach.web.identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, workspace_identity
 
 
 WEB_AVAILABLE = all(importlib.util.find_spec(name) is not None for name in ("fastapi", "uvicorn", "pydantic"))

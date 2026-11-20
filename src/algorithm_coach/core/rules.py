@@ -12,7 +12,7 @@ from typing import NoReturn
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .catalog import PROBLEMS
-from .errors import CoachError
+from ..errors import CoachError
 from .policies import default_policy, filter_catalog, policy_active, validate_plan_candidates, validate_policy
 
 RULE_VERSION = "1"

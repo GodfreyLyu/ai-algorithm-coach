@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from algorithm_coach.errors import CoachError
-from algorithm_coach.scoring import derive_practice_progress, derive_topic_scores
+from algorithm_coach.core.scoring import derive_practice_progress, derive_topic_scores
 from algorithm_coach.service import Coach
 
 
