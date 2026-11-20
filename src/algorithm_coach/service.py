@@ -216,6 +216,23 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
                     self._refresh_state()
         return self.get_config()
 
+    def preview_config(self, changes: dict, training_date: str | None = None) -> dict:
+        """Inputs: unsaved configuration changes and an optional date. Outputs: a read-only preview.
+
+        Logic: validate the merged settings and run selection without saving or allocating.
+        Dependencies: pure configuration rules, the active policy, and the plan report.
+        """
+        if not isinstance(changes, dict):
+            raise CoachError("validation_error", "Configuration changes must be an object.")
+        current = self.get_config()
+        proposed = validate_config({**current["config"], **changes})
+        local_date = self._date(training_date)
+        policy = self.get_policy(local_date)
+        existing = self._db().execute("SELECT id FROM plans WHERE training_date = ?", (local_date,)).fetchone()
+        report = self._policy_report(policy["policy"], local_date, proposed)
+        return {"training_date": local_date, "current_revision": current["revision"], "config": proposed,
+                "plan_exists": existing is not None, "saved": False, **report}
+
     def _date(self, value: str | None) -> str:
         """Inputs: an optional training date. Outputs: an explicit local date.
 

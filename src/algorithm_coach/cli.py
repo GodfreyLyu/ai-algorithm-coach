@@ -157,6 +157,8 @@ def _parser() -> argparse.ArgumentParser:
     config = commands.add_parser("config")
     config.add_argument("--changes")
     config.add_argument("--expected-revision", type=int)
+    config.add_argument("--preview", action="store_true", help="Validate changes and preview selection without saving.")
+    config.add_argument("--date", help="Training date for --preview.")
     practice = commands.add_parser("practice", help="Create an explicit redo or retest.")
     practice.add_argument("--problem", required=True)
     practice.add_argument("--submission", required=True)
@@ -269,6 +271,12 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
             state.pop("attempts", None)
         return state
     if args.command == "config":
+        if args.preview:
+            if args.changes is None or args.expected_revision is not None:
+                raise CoachError("validation_error", "Use --preview with --changes and without --expected-revision.")
+            return coach.preview_config(_changes(args.changes), args.date)
+        if args.date is not None:
+            raise CoachError("validation_error", "Use --date only with --preview.")
         if args.changes is None:
             if args.expected_revision is not None:
                 raise CoachError("validation_error", "Use --changes with --expected-revision.")
