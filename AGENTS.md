@@ -8,6 +8,12 @@
 - Give every Python function and method a docstring. Include `Inputs:`, `Outputs:`,
   `Logic:`, and `Dependencies:`. Include test helpers and private methods.
 - Keep training decisions in the shared Python core. Adapters must call that core.
+- Put training rules in `src/algorithm_coach/core/`. Core modules do not open
+  databases or perform I/O.
+- Put the schema, transactions, and persisting `Coach` mixins in `store/`.
+  Only `web/` may import Web dependencies.
+- Keep tools in `scripts/checks/` and `scripts/packaging/`. Do not name a
+  directory `build`. Git and the comment check both skip that name.
 - Keep the runtime free of third-party dependencies for the local Skill path.
 - Do not use chat summaries or browser caches as another learning authority.
 - Preserve feedback history, stable operation IDs, and optimistic revision checks.
@@ -37,7 +43,7 @@ Run these checks after a relevant change:
 
 ```sh
 python3.12 -m unittest discover -s tests -v
-python3.12 scripts/check_comments.py
+python3.12 scripts/checks/check_comments.py
 ```
 
 The optional React TypeScript and FastAPI panel is local-only. Its scope is saved

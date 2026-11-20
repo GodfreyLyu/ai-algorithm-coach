@@ -1,6 +1,6 @@
 """Read current practice records, selection history, and learning checkpoints."""
 
-from .errors import CoachError
+from ..errors import CoachError
 from . import storage
 
 

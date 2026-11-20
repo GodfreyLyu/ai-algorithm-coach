@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const directory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../web/dist");
+const directory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
 const root = path.resolve(directory, "../..");
 const manifest = "coach-ui-manifest.json";
 

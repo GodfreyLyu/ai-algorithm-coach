@@ -11,7 +11,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from algorithm_coach.service import Coach
 from algorithm_coach.errors import CoachError
-from algorithm_coach.web_identity import UI_MANIFEST, inspect_ui, workspace_identity
+from algorithm_coach.web.identity import UI_MANIFEST, inspect_ui, workspace_identity
 
 
 def write_ui(directory: Path) -> dict:

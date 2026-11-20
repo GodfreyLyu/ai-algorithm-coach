@@ -151,7 +151,7 @@ class CatalogTests(unittest.TestCase):
         self.coach.activate_policy(proposal["proposal_id"], 0, proposal["content_hash"], "activate-tree")
         invalid = [{"problem_id": "leetcode:1", "attempt_id": None,
                     "reason": "foundation", "review_source_attempt_id": None}]
-        with patch("algorithm_coach.policy_store.select_candidates", return_value=invalid):
+        with patch("algorithm_coach.store.policy_store.select_candidates", return_value=invalid):
             with self.assertRaises(CoachError):
                 self.coach.ensure_plan("2026-01-02")
         with self.assertRaises(CoachError):

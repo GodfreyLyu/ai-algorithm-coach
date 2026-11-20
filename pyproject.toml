@@ -14,7 +14,7 @@ dependencies = []
 
 [project.scripts]
 algorithm-coach = "algorithm_coach.cli:main"
-algorithm-coach-web = "algorithm_coach.http_api:main"
+algorithm-coach-web = "algorithm_coach.web.http_api:main"
 
 [project.optional-dependencies]
 web = ["fastapi>=0.115,<1", "pydantic>=2.10,<3", "uvicorn>=0.30,<1"]

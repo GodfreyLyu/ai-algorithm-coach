@@ -21,10 +21,10 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 
-from . import __version__
-from .errors import CoachError
-from .service import Coach
-from .web_identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, inspect_ui, store_id
+from .. import __version__
+from ..errors import CoachError
+from ..service import Coach
+from .identity import API_VERSION, RUNTIME_PROTOCOL, SERVICE_NAME, inspect_ui, store_id
 
 
 MAX_REQUEST_BYTES = 1_048_576
@@ -561,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
             raise CoachError("validation_error", "The data directory must be an absolute path.")
         assets = Path(args.static_dir).expanduser() if args.static_dir else None
         if assets is None:
-            candidate = Path(__file__).resolve().parents[2] / "web" / "dist"
+            candidate = Path(__file__).resolve().parents[3] / "web" / "dist"
             assets = candidate if candidate.is_dir() else None
         _execute(directory, "context", {})
         app = create_app(directory, assets, args.allowed_origin)

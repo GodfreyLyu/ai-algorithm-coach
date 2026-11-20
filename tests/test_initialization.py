@@ -32,7 +32,7 @@ class InitializationTests(unittest.TestCase):
                 [sys.executable, "-S", "-c",
                  "import os, sys; from pathlib import Path; "
                  "sys.path.insert(0, sys.argv[1]); "
-                 "from algorithm_coach import storage; "
+                 "from algorithm_coach.store import storage; "
                  "connection = storage.create(Path(sys.argv[2])); os._exit(17)",
                  str(ROOT / "src"), str(db)],
                 capture_output=True, text=True, timeout=30,

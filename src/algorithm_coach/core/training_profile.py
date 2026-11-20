@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import date, timedelta
 import math
 
-from .errors import CoachError
+from ..errors import CoachError
 from .policies import filter_catalog, validate_plan_candidates
 
 
@@ -225,7 +225,7 @@ def assessment_version(attempt: dict) -> str:
     """
     if "assessment_version" in attempt:
         return attempt["assessment_version"]
-    from .storage import canonical_json
+    from ..store.storage import canonical_json
     import hashlib
 
     return hashlib.sha256(canonical_json(attempt.get("assessment", {})).encode()).hexdigest()

@@ -8,15 +8,15 @@ import sqlite3
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from .catalog import CATALOG_VERSION, PROBLEMS
-from .complexity import ComplexityMixin
+from .core.catalog import CATALOG_VERSION, PROBLEMS
+from .store.complexity import ComplexityMixin
 from .errors import CoachError
-from .policies import eligibility, validate_plan_candidates
-from .policy_store import PolicyMixin
-from .records import PracticeRecordsMixin
-from .rules import default_config, derive_learning_state, merge_feedback, validate_config
-from .scoring import derive_practice_progress, derive_topic_scores
-from . import storage
+from .core.policies import eligibility, validate_plan_candidates
+from .store.policy_store import PolicyMixin
+from .store.records import PracticeRecordsMixin
+from .core.rules import default_config, derive_learning_state, merge_feedback, validate_config
+from .core.scoring import derive_practice_progress, derive_topic_scores
+from .store import storage
 
 
 def _now() -> str:
@@ -534,7 +534,7 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
                     raise CoachError("daily_capacity_exceeded", "The policy's daily practice capacity is already reserved.", {"reserved_count": len(reserved), "limit": maximum})
             profile_context = None
             if config.get("training_profile") == "tokyo-interview-v1":
-                from .training_profile import primary_framework, validate_score, verified_sources
+                from .core.training_profile import primary_framework, validate_score, verified_sources
 
                 profile_context = self._selection_context(selected_date)["candidates"].get(problem_id, {})
                 frame = primary_framework(problem, context=profile_context)
@@ -556,7 +556,7 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
                 source = review["source_attempt_id"]
             attempt_id = self._new_attempt(problem_id, selected_language, selected_date, "review" if source else "redo", source, review_id)
             if profile_context is not None:
-                from .training_profile import timebox
+                from .core.training_profile import timebox
 
                 practiced = any(item["problem_id"] == problem_id and item["id"] != attempt_id and item.get("feedback")
                                 for item in self._attempts())

@@ -7,7 +7,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const requireWeb = createRequire(path.join(root, "web", "package.json"));
 const { chromium, expect } = requireWeb("@playwright/test");
 const python = process.env.COACH_WEB_PYTHON || path.join(root, ".venv-web", "bin", "python");
@@ -143,7 +143,7 @@ async function main() {
   const pageErrors = [];
   try {
     webPython = runPython(["-c", "import json,sys; print(json.dumps(sys.executable))"]);
-    const built = runPython(["-S", path.join(root, "scripts", "build_skill.py"), "--output", bundle, "--with-web"]);
+    const built = runPython(["-S", path.join(root, "scripts", "packaging", "build_skill.py"), "--output", bundle, "--with-web"]);
     assert.equal(built.ok, true);
     assert.equal(built.data.web_assets, true);
     assert.ok(fs.existsSync(path.join(bundle, "assets", "web", "coach-ui-manifest.json")));

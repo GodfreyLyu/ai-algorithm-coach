@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 from uuid import uuid4
 
-from .errors import CoachError
+from ..errors import CoachError
 from . import storage
 
 
@@ -164,7 +164,7 @@ class ComplexityMixin:
         Logic: append framework, source, and score evidence without changing catalog facts.
         Dependencies: the training profile validator, current catalog, and transactions.
         """
-        from .training_profile import validate_training_context
+        from ..core.training_profile import validate_training_context
 
         _text(submission_id, "Submission ID", 200)
         if not isinstance(document, dict) or set(document) - {"problem_id", "attempt_id", "context"}:

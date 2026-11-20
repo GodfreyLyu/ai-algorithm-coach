@@ -120,8 +120,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check file purposes and Python function contracts
-        run: python scripts/check_comments.py
+        run: python scripts/checks/check_comments.py
       - name: Check Markdown links, heading anchors, and code fences
-        run: python scripts/check_docs.py
+        run: python scripts/checks/check_docs.py
       - name: Test documentation checks and public CLI examples
         run: python -m unittest discover -s tests -p test_documentation.py -v

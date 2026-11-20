@@ -43,7 +43,7 @@ class CommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             bundle = base / "algorithm-coach"
-            built = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "build_skill.py"),
+            built = subprocess.run([sys.executable, "-S", str(ROOT / "scripts" / "packaging" / "build_skill.py"),
                                     "--output", str(bundle)], capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
             entry = bundle / "scripts" / "coach.py"

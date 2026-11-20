@@ -8,11 +8,11 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from algorithm_coach.rules import derive_learning_state, default_config
+from algorithm_coach.core.rules import derive_learning_state, default_config
 from algorithm_coach.errors import CoachError
 from algorithm_coach.service import Coach
-from algorithm_coach import storage
-from algorithm_coach.training_profile import assessment_version, learning_outcome
+from algorithm_coach.store import storage
+from algorithm_coach.core.training_profile import assessment_version, learning_outcome
 from test_training_profile import _attempt, _catalog, _checkpoint, _config
 
 

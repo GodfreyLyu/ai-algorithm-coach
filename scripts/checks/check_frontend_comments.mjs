@@ -4,7 +4,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const requireWeb = createRequire(path.join(root, "web", "package.json"));
 const ts = requireWeb("typescript");
 const labels = ["Inputs:", "Outputs:", "Logic:", "Dependencies:"];
@@ -87,10 +87,7 @@ function inspect(file, text) {
   return failures;
 }
 
-const files = sourceFiles(path.join(root, "web"));
-for (const file of fs.readdirSync(path.join(root, "scripts"))) {
-  if (file.endsWith(".mjs")) files.push(path.join(root, "scripts", file));
-}
+const files = [...sourceFiles(path.join(root, "web")), ...sourceFiles(path.join(root, "scripts"))];
 const failures = [];
 for (const file of files) failures.push(...inspect(file, fs.readFileSync(file, "utf8")));
 for (const failure of failures) process.stderr.write(`${failure}\n`);

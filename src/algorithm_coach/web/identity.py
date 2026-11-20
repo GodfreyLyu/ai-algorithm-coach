@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 
-from .service import Coach
+from ..service import Coach
 
 API_VERSION = "1"
 RUNTIME_PROTOCOL = 1

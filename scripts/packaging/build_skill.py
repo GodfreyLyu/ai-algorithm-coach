@@ -15,11 +15,11 @@ def build(output: Path, with_web: bool = False, web_assets: Path | None = None) 
     Logic: Validate optional UI assets, copy public files, and remove partial output on failure.
     Dependencies: pathlib, shutil, and this source checkout. No build service is used.
     """
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     assets = Path(web_assets) if web_assets is not None else root / "web" / "dist"
     if with_web:
         sys.path.insert(0, str(root / "src"))
-        from algorithm_coach.web_identity import inspect_ui
+        from algorithm_coach.web.identity import inspect_ui
 
         readiness = inspect_ui(assets, include_files=True)
         if not readiness["ui_ready"]:
@@ -40,7 +40,7 @@ def build(output: Path, with_web: bool = False, web_assets: Path | None = None) 
         shutil.copy2(root / "LICENSE", output / "LICENSE")
         shutil.copy2(root / "THIRD_PARTY_NOTICES.md", output / "THIRD_PARTY_NOTICES.md")
         if with_web:
-            from algorithm_coach.web_identity import UI_MANIFEST
+            from algorithm_coach.web.identity import UI_MANIFEST
 
             target = output / "assets" / "web"
             target.mkdir(parents=True)

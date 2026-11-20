@@ -5,7 +5,7 @@ from datetime import date
 import re
 
 from .catalog_validation import DIFFICULTIES
-from .errors import CoachError
+from ..errors import CoachError
 
 
 def default_policy() -> dict:

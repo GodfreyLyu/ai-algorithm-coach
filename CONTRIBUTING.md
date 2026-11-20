@@ -26,8 +26,8 @@ Run from the repository root:
 
 ```sh
 python3.12 -m unittest discover -s tests -v
-python3.12 scripts/check_comments.py
-python3.12 scripts/check_docs.py
+python3.12 scripts/checks/check_comments.py
+python3.12 scripts/checks/check_docs.py
 ```
 
 For Web changes, also run the build, comment checks, HTTP tests, and real browser

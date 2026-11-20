@@ -14,7 +14,7 @@ from algorithm_coach.service import Coach
 WEB_AVAILABLE = all(importlib.util.find_spec(name) is not None for name in ("fastapi", "httpx", "uvicorn"))
 if WEB_AVAILABLE:
     from fastapi.testclient import TestClient
-    from algorithm_coach.http_api import create_app
+    from algorithm_coach.web.http_api import create_app
 
 
 @unittest.skipUnless(WEB_AVAILABLE, "Install the optional web requirements to run HTTP tests.")

@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 from typing import Iterator
 
-from .errors import CoachError
+from ..errors import CoachError
 from .schema import CURRENT_TABLES, SCHEMA
 
 

@@ -133,7 +133,7 @@ Build a core-only bundle with the existing builder. To include the local panel:
 ```sh
 npm ci --prefix web
 npm run build --prefix web
-python3.12 scripts/build_skill.py --output /path/to/new/web-skill --with-web
+python3.12 scripts/packaging/build_skill.py --output /path/to/new/web-skill --with-web
 ```
 
 The builder verifies the complete resource manifest before copying public assets.
@@ -326,8 +326,8 @@ npx playwright install chromium
 cd ..
 npm run check-comments --prefix web
 npm run test:e2e --prefix web
-python3.12 scripts/check_comments.py
-python3.12 scripts/check_docs.py
+python3.12 scripts/checks/check_comments.py
+python3.12 scripts/checks/check_docs.py
 ```
 
 The standard-library run skips optional HTTP tests when their dependencies are
