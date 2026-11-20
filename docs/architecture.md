@@ -19,9 +19,20 @@ The local Skill loop is the first delivery.
 It uses Python 3.12 or later, SQLite, and the standard library.
 No dependency installation or long-running service is needed for that loop.
 
-```text
-Conversation -> Skill -> CLI -> Application service -> SQLite
-                              -> Deterministic rules
+```mermaid
+flowchart TD
+    accTitle: The Skill and Web panel share one local store
+    accDescr: The Skill host uses the CLI. The browser uses the optional FastAPI adapter. Both call Coach, which uses deterministic rules and persists records through the store layer in SQLite.
+    skill["Skill in a local agent"] --> cli["Python CLI"]
+    browser["Browser panel"] --> api["Optional FastAPI adapter"]
+    cli --> coach["Coach application service"]
+    api --> coach
+    coach --> core["core/<br/>Training rules"]
+    coach --> store["store/<br/>Transactions and revisions"]
+    store <--> database[("SQLite workspace")]
+    classDef default fill:transparent,stroke:#8a9bb0
+    classDef accent fill:#e8f1ff,stroke:#3d67aa,color:#102240,stroke-width:2px
+    class coach,database accent
 ```
 
 The Skill interprets user intent and explains recommendations.

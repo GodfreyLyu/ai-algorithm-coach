@@ -9,7 +9,8 @@ The local Skill loop needs no database server, model API key, or web service.
 The optional local panel uses React with TypeScript and FastAPI. It displays saved
 plans, records feedback in the same database, and shows topic completion rates.
 
-[Quick start](#quick-start) · [Daily scheduling](#schedule-daily-training) ·
+[Quick start](#quick-start) · [Training prompts](#customize-training-with-prompts) ·
+[Daily scheduling](#schedule-daily-training) ·
 [Local Web panel](#run-the-local-web-panel)
 
 ## What works
@@ -119,6 +120,21 @@ feedback link. The Skill uses `start-session` for this request. [Web setup](#run
 From the terminal, use `plan` to create or reuse the assignment. Use `show` to
 read an existing assignment. Both commands accept `--date YYYY-MM-DD`.
 
+```mermaid
+flowchart TD
+    accTitle: Choose a daily training command
+    accDescr: Use show to read a saved plan, plan to save or reuse a plan, or start-session to prepare the plan and panel. Open the returned URL when Web is ready. Otherwise, use the saved plan in chat or the CLI.
+    task(["What do you need?"])
+    task -->|Read a saved plan| read["show"]
+    task -->|Plan and Web panel| session["start-session"]
+    task -->|Prepare a plan| plan["plan"]
+    session -->|Web ready| browser["Open the returned URL"]
+    session -->|Web unavailable| fallback["Use the saved plan<br/>in chat or the CLI"]
+    classDef default fill:transparent,stroke:#8a9bb0
+    classDef accent fill:#e8f1ff,stroke:#3d67aa,color:#102240,stroke-width:2px
+    class session,browser accent
+```
+
 ```sh
 python3.12 skills/algorithm-coach/scripts/coach.py plan
 python3.12 skills/algorithm-coach/scripts/coach.py show
@@ -129,6 +145,70 @@ the catalog. Running `plan` again for the same date returns the published plan.
 The next training date can continue the same unfinished attempt. To limit the
 selection or expand the catalog, see [training scope](#set-a-training-scope) and
 [problem metadata](#add-problem-metadata).
+
+### Customize training with prompts
+
+Select the Skill in your agent and paste a prompt below. You can edit the
+numbers, topics, or problem IDs. Use the existing workspace set up above.
+
+#### Change the daily target and language
+
+```text
+Use the algorithm-coach Skill. Set my daily plan target to four problems and
+my practice language to Python. Read config first and use its current revision
+for the update. Read back the saved target and language.
+```
+
+The target includes unfinished work and reviews. New settings apply when a
+plan is first saved. The active scope and training profile can limit the result.
+
+#### Choose topics, difficulty, and a daily cap
+
+```text
+Use the algorithm-coach Skill. Propose a scope for seven training dates starting
+tomorrow in my workspace timezone. Allow Easy problems tagged array or
+hash-table. Set a hard cap of three distinct allocations per day across plans
+and manual practice. Preview the proposal. Show the scope, hash, dates,
+selected candidates, paused work, shortfall, and expiry fallback. Show any
+activation blockers. Wait for my approval to activate it.
+```
+
+#### Use a hand-picked set of eligible problems
+
+```text
+Use the algorithm-coach Skill. For the next training date with no published
+plan, propose a one-day scope allowing only leetcode:1, leetcode:20, and
+leetcode:704. Preview which problems the planner would select. Show the scope
+and hash, plus any inherited limits, paused work, shortfall, or activation
+blockers. Wait for my approval to activate it.
+```
+
+The ID list defines the eligible pool. The planner uses the saved practice
+history and the plan target to select from it. After approving the exact scope
+proposal and activating it, ask for a plan inside that date window.
+[Policy approval steps](docs/policies.md#proposal-preview-approval-activation)
+
+#### Search online and import new problems
+
+```text
+Use the algorithm-coach Skill. Search online for and import up to four new
+Medium LeetCode graph problems that use breadth-first search. Use my existing
+workspace. Read my catalog, capabilities, and effective training scope first.
+Choose problems that are absent from my catalog and fit that scope.
+
+Use your host's web tools to open each official problem page. Check the
+problem number, title, difficulty, and canonical link. Map topics to existing
+catalog tags. Prepare a batch with only id, title, difficulty, tags, and url.
+
+Preview the exact batch with catalog preview. If import_allowed is true, use
+catalog import with the preview payload_hash as --expected-hash and a stable
+submission ID. Check the applied receipt and read back the imported entries.
+List the added problems with official links. Report any blockers or shortfall.
+```
+
+Edit the count, difficulty, and topic to fit your needs. Imported problems enter
+the candidate pool for future plans. A host without web access can preview a
+metadata file you supply. [Catalog discovery workflow](docs/catalog-discovery.md#use-through-a-host-agent)
 
 ### Save feedback
 
@@ -269,7 +349,8 @@ Create a missing plan with the Skill or CLI, then click **Refresh** in the panel
 
 Scores use each problem's latest valid A–D result in the selected language.
 Each topic's rate is the share of those problems with a self-reported A for
-independent AC. See the [Web guide](docs/web.md) and [feedback meanings](#feedback-meanings).
+independent AC. See the [Web guide and screenshots](docs/web.md#interface-design)
+and [feedback meanings](#feedback-meanings).
 
 ## Set a training scope
 
