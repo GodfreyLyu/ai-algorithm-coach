@@ -233,6 +233,27 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
         return {"training_date": local_date, "current_revision": current["revision"], "config": proposed,
                 "plan_exists": existing is not None, "saved": False, **report}
 
+    def schedule_status(self, observed_rrule: str | None = None, observed_cron: str | None = None,
+                        observed_timezone: str | None = None) -> dict:
+        """Inputs: an optional observed host rule and timezone. Outputs: schedule data.
+
+        Logic: describe the saved run time, or compare it with an observed host rule.
+        Dependencies: saved configuration, workspace identity, and core schedule rules.
+        """
+        from .core.schedule import check_schedule, describe_schedule
+
+        config = self.get_config()
+        settings = config["config"]
+        now = datetime.now(timezone.utc)
+        if observed_rrule is None and observed_cron is None:
+            if observed_timezone is not None:
+                raise CoachError("validation_error", "Use --observed-timezone with an observed rule.")
+            result = describe_schedule(settings["run_time"], settings["timezone"], now)
+        else:
+            result = check_schedule(settings["run_time"], settings["timezone"], now,
+                                    observed_rrule, observed_cron, observed_timezone)
+        return {**result, "config_revision": config["revision"], **self.get_workspace_identity()}
+
     def _date(self, value: str | None) -> str:
         """Inputs: an optional training date. Outputs: an explicit local date.
 

@@ -192,6 +192,14 @@ def _parser() -> argparse.ArgumentParser:
     context.add_argument("--file", required=True)
     backup = commands.add_parser("backup")
     backup.add_argument("--output", required=True)
+    schedule = commands.add_parser("schedule", help="Describe or check the saved daily run time.")
+    schedule_ops = schedule.add_subparsers(dest="schedule_command", required=True)
+    schedule_ops.add_parser("show", help="Show scheduler expressions and the next run times.")
+    schedule_check = schedule_ops.add_parser("check", help="Compare an observed host rule with the saved time.")
+    observed = schedule_check.add_mutually_exclusive_group(required=True)
+    observed.add_argument("--observed-rrule")
+    observed.add_argument("--observed-cron")
+    schedule_check.add_argument("--observed-timezone")
     commands.add_parser("check")
     commands.add_parser("rebuild-state")
     return parser
@@ -315,6 +323,10 @@ def _execute(coach: Coach, args: argparse.Namespace) -> dict:
         return coach.save_training_context(args.submission, _document(args.file))
     if args.command == "backup":
         return coach.backup(Path(args.output).expanduser())
+    if args.command == "schedule":
+        if args.schedule_command == "show":
+            return coach.schedule_status()
+        return coach.schedule_status(args.observed_rrule, args.observed_cron, args.observed_timezone)
     if args.command == "check":
         return coach.integrity_check()
     if args.command == "rebuild-state":
