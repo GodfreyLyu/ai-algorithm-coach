@@ -85,6 +85,10 @@ researched candidate context, then run `start-session`. It saves or reuses the
 plan before starting the managed local feedback panel. Return its exact date/store
 URL only after `web.status` is `ready`.
 
+`schedule show` derives the daily rule and next runs from `run_time` and
+`timezone`. `schedule check` compares them with an observed host rule.
+Neither command edits a host task.
+
 Preferred run time in SQLite is not a scheduler. The full workflow needs a host
 model session and local execution. A prompt alone does not establish write or
 network permissions. Check the effective host configuration when wiring a task.

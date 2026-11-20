@@ -96,6 +96,10 @@ Repeated planning returns the same published plan.
 Provide hints and explanations as requested. Keep model suggestions separate from
 saved facts. The Skill cannot schedule itself or wake up in the background.
 
+Read [daily mix and run time](references/settings.md) when the user changes the
+daily count, the weak/new/review/unfinished mix, or the daily run time. A saved
+`daily_mix` is enforced by the core. Report its category shortfalls as returned.
+
 ## Record feedback
 
 Map a clear user response to its existing attempt. If the target or result is
@@ -193,6 +197,8 @@ Never edit stored policy revisions or bypass scope through manual practice.
 
 Use `config` to read saved settings. Changes need `--changes JSON` and
 `--expected-revision N`. Do not reconfigure the user each day.
+Use `config --preview --changes JSON` to check a change without saving it.
+Use `schedule show` and `schedule check` for the run time. They never edit a host task.
 Use `catalog` for problem metadata and official links.
 Use `backup --output NEW_PATH` for a consistent backup.
 Use `check` for integrity and `rebuild-state` to rebuild derived state when requested.
