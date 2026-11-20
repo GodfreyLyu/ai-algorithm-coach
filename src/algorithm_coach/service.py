@@ -15,7 +15,7 @@ from .policies import eligibility, validate_plan_candidates
 from .policy_store import PolicyMixin
 from .records import PracticeRecordsMixin
 from .rules import default_config, derive_learning_state, merge_feedback, validate_config
-from .scoring import derive_topic_scores
+from .scoring import derive_practice_progress, derive_topic_scores
 from . import storage
 
 
@@ -635,13 +635,13 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
         state_version = source.execute("SELECT version FROM learning_state WHERE singleton = 1").fetchone()[0]
         return {"status": "verified", "schema_version": version, "state_version": state_version}
 
-    def get_topic_scores(self, language: str | None = None) -> dict:
-        """Read topic rates from one consistent authority snapshot.
+    def _read_derived(self, language: str | None, derive) -> dict:
+        """Read one derived view from a consistent authority snapshot.
 
-        Inputs: An optional language; None uses the saved default language.
-        Outputs: Self-reported topic metrics and the matching state version.
-        Logic: Read existing evidence and mastery without rebuilding or saving scores.
-        Dependencies: A deferred read transaction, stored catalog, and derive_topic_scores.
+        Inputs: An optional language and a pure derivation function.
+        Outputs: The derived data with the matching state version.
+        Logic: Read evidence and mastery in one read transaction without saving.
+        Dependencies: A deferred read transaction, stored catalog, and the derivation.
         """
         connection = self._db()
         owns_snapshot = not connection.in_transaction
@@ -651,11 +651,8 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
             config = self.get_config()["config"]
             selected_language = config["language"] if language is None else validate_config({**config, "language": language})["language"]
             state = self._state()
-            scores = derive_topic_scores(
-                self._attempts(), self.list_problems()["problems"],
-                selected_language, state["problems"],
-            )
-            result = {**scores, "state_version": state["state_version"]}
+            derived = derive(self._attempts(), self.list_problems()["problems"], selected_language, state["problems"])
+            result = {**derived, "state_version": state["state_version"]}
             if owns_snapshot:
                 connection.commit()
             return result
@@ -663,3 +660,23 @@ class Coach(ComplexityMixin, PracticeRecordsMixin, PolicyMixin):
             if owns_snapshot:
                 connection.rollback()
             raise
+
+    def get_topic_scores(self, language: str | None = None) -> dict:
+        """Read topic rates from one consistent authority snapshot.
+
+        Inputs: An optional language; None uses the saved default language.
+        Outputs: Self-reported topic metrics and the matching state version.
+        Logic: Read existing evidence and mastery without rebuilding or saving scores.
+        Dependencies: _read_derived and derive_topic_scores.
+        """
+        return self._read_derived(language, derive_topic_scores)
+
+    def get_practice_progress(self, language: str | None = None) -> dict:
+        """Read daily activity and per-problem results from one snapshot.
+
+        Inputs: An optional language; None uses the saved default language.
+        Outputs: Self-reported daily counts, problem rows, and the state version.
+        Logic: Derive read-only progress without changing plans or mastery.
+        Dependencies: _read_derived and derive_practice_progress.
+        """
+        return self._read_derived(language, derive_practice_progress)

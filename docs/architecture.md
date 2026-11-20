@@ -5,7 +5,8 @@
 The optional [local Web panel](web.md) is a thin React and FastAPI adapter.
 It reads existing plans and saves feedback through Coach. It does not publish
 plans or manage policies. Topic scores are read-only aggregates of current
-self-reported evidence. They do not replace weakness or mastery rules.
+self-reported evidence. Practice progress is a read-only daily summary from the
+same evidence. Neither replaces weakness or mastery rules.
 
 This release is a local tool. A manually requested date uses the records available
 when its plan is generated. It does not reconstruct an earlier learning snapshot.

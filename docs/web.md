@@ -2,7 +2,8 @@
 
 # Local training panel
 
-The Web panel has two views: daily plans with feedback forms, and topic scores.
+The Web panel has two views: daily plans with feedback forms, and topic scores
+with practice activity.
 React calls FastAPI. FastAPI calls the same Coach service used by the Skill.
 SQLite remains the only learning authority.
 
@@ -164,8 +165,10 @@ Select A–F, enter cumulative minutes, and submit one practice at a time.
 Extra fields are optional. Unanswered values are not converted into false or D.
 An untouched field stays unchanged. Explicit clearing stays distinct from omission.
 
-Save feedback records continued progress and details. Use **Correct saved record**
-when the prior record was wrong. That action changes the button to **Save correction**.
+One save button records continued progress, details, and code. Its label names
+what it will write: **Save feedback**, **Save code**, or **Save feedback and code**.
+Use **Correct saved record** when the prior record was wrong. The button then
+starts with **Save correction**.
 **Cancel correction** restores the saved fields and clears the correction draft.
 Both operations keep history and use the current expected revision. There is no
 update-mode dropdown.
@@ -173,19 +176,42 @@ Save feedback to an existing attempt. Saving never creates a new redo or retest.
 Result changes use the current practice time. Corrections and same-result
 detail updates retain the saved practice time.
 
+A save waits until the code and review status are loaded for the same feedback
+revision as the plan. After a read error, retry the status read. Reload the plan
+if the feedback revisions differ.
+
+When both parts are submitted, feedback is saved first. Code is then bound to
+the committed feedback revision for a new review. Saving feedback includes
+locally edited code or code already saved for the displayed revision. Code from
+an older revision needs an explicit choice before it can be bound again.
+A rejected code step after committed feedback is reported as a partial save.
+Any local code edits stay in the editor.
+
 The page shows unsaved, saving, saved to database, or save failed.
+**Retry save** continues from the uncertain step. It checks the same submission
+before sending it again and skips a step that already committed.
 Only a committed matching receipt confirms a save. A readable HTTP response alone
 does not establish success. A lost response can be checked or retried with the
 same submission ID and exact content. Conflicts require review and reload.
 Requests time out after ten seconds. A timeout leaves the outcome uncertain;
 it does not imply that the database rejected the save.
 
+After a save with a result, the page opens the next problem without a result.
+Turn this off with **Open next problem after saving** in the rail. The setting
+lives only in page memory.
+
+Keyboard shortcuts work while the editor is open. Press A–F to choose a result
+when focus is not in a text field. Press Ctrl+Enter or Command+Enter to save or
+retry. In the code editor, Tab inserts four spaces. Press Escape, then Tab, to
+move focus out of the editor.
+
 Drafts live only in the current page. Switching problems, dates, or views keeps
-unsaved fields in memory. Each draft belongs to one store, attempt, and saved
-revision. A newer saved revision starts a fresh editor. A confirmed save clears
-its draft. Reloading after a conflict discards that revision's stale input.
-There is no IndexedDB, offline queue, or background delivery. Reloading or closing
-the page discards unsaved input. Retained input is not a saved training record.
+unsaved fields in memory. Feedback drafts belong to a store, attempt, and saved
+revision. Reloading after a conflict clears that revision's feedback draft.
+Solution drafts belong to a store and attempt. They keep local edits to the code
+or input sizes across panel refreshes. A matching save receipt clears the draft
+for the part saved. There is no IndexedDB, offline queue, or background delivery.
+A browser reload or tab close discards unsaved input.
 
 ## Interface design
 
@@ -193,33 +219,48 @@ The panel follows the approved native-tool layout. A gray problem rail sits besi
 a white code pane and a quiet feedback pane. Blue marks selection, focus, and the
 primary save action. The first saved problem is selected when the plan opens.
 Select another problem in the rail to keep working. Only one editor is visible.
+Each rail item shows its current result letter. A segmented bar shows how many
+problems have a result. Previous-day, next-day, and **Today** buttons sit beside
+the date input. **Today** uses the workspace timezone, not the browser clock.
 Working text uses 13–16px. Metadata uses at least 12px. Primary controls have a
 44px minimum height. Smaller screens stack the panes and reflow problem navigation.
 
-Solution code stays visible. It has no separate disclosure. Code and feedback have
-separate save buttons and receipts. Unsaved feedback must be saved before code can
-be submitted for review. A successful code save keeps its text in page memory.
-Changing the feedback revision keeps that text as an unsaved code draft for the
-new revision. A fresh review requires an explicit code submission. Reloading or
-closing the page clears unsaved input. The existing status read restores saved
-code when there is no local draft. A late response never replaces code being typed.
-Evidence from an older feedback revision remains visibly stale and needs an
-explicit submission for the current revision.
+Solution code stays visible. It has no separate disclosure. The code pane grows
+to match the feedback pane. Opening an attempt or clicking **Refresh** reads
+its latest saved code and review status, including code replaced within the same
+feedback revision. Local edits stay visible when a status response arrives.
+While a local draft is visible, the review badge identifies the saved version.
+The panel marks evidence bound to an older feedback revision as stale.
+On wide screens the save bar stays visible at the bottom of the feedback pane.
 
-Native radio controls provide one explicit A–F choice. No result is selected
+Native radio controls provide one explicit A–F choice in a three-column grid.
+Each card shows its letter, label, and a short detail. No result is selected
 for an unanswered attempt. E and F reveal their optional date fields beside the
 main inputs. Existing date values remain visible so they can be cleared explicitly.
 The result guide is a disclosure at every screen size.
 
-Time and space complexity use native selects beside cumulative time. The options
+The main form shows only the result, optional dates, and cumulative time.
+Complexity, the stuck note, explanation, boundary tests, and familiarity sit under
+**More details**. That section opens by itself when any of those fields has a value.
+
+Time and space complexity use native selects. The options
 include common complexity classes and an unanswered choice. Existing values outside
 the presets remain available exactly as saved. Changing another field does not
 normalize or erase them.
 
-Topic rates appear beside their independent and recorded problem counts.
-Figures and evidence use tabular numbers within one compact table.
-The comparison table becomes labeled rows on mobile. Missing data stays distinct
-from zero. Small samples and stable counts keep their existing meanings.
+The scores view opens with summary tiles: recorded problems, independent AC,
+stable problems, practice days, and topics practiced. A daily column chart shows
+the last four or twelve weeks. Each column stacks A–D and merged E/F counts.
+A table view lists the same days. Each practiced topic has a stacked A–D bar,
+its rate, and its stable count. Sort by weakest first, most practiced, or name.
+Select a topic to list its problems with their latest result, practice date,
+attempt count, and saved mastery. Topics without evidence fold into one line.
+
+Charts use one blue ramp for A–D. Darker means more independent. E/F use gray.
+Every chart has a legend and a text or table equivalent, so color is never the
+only signal. Charts are plain HTML and CSS. The panel adds no chart dependency.
+Missing data stays distinct from zero. Small samples and stable counts keep their
+existing meanings.
 
 The design pass follows [unslop](https://github.com/heydamir/unslop) by
 Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), licensed under
@@ -246,6 +287,12 @@ Topic counts must not be added together as a total unique problem count.
 
 Scores are derived on read. They have no separate table and do not change the
 existing selection or mastery rules. The metric version is included in the API.
+
+`GET /v1/progress` returns daily activity and per-problem rows from the same core.
+Each attempt with a current A–F result counts once on its practice date, with
+its recorded minutes. Problem rows reuse the latest A–D rule from topic scores.
+The response is read-only and self-reported. It has its own `progress_version`.
+Scores and progress load only while the scores view is open.
 
 ## Local boundary
 
@@ -285,8 +332,9 @@ python3.12 scripts/check_docs.py
 
 The standard-library run skips optional HTTP tests when their dependencies are
 absent. The Web environment must run them. Browser tests verify a real form
-submission, correction history, response-loss and timeout recovery, readback through the
-Skill, restart persistence, scores, and mobile layout. Screenshots are written
+submission, the shared feedback and code save, auto-advance, keyboard shortcuts,
+date steps, correction history, response-loss and timeout recovery, readback through
+the Skill, restart persistence, score charts, topic drill-down, and mobile layout. Screenshots are written
 under the ignored `web/test-results` directory. No private workspace is used.
 The browser run builds a standalone Web Skill and uses its managed session,
 reuse, status, and stop commands. Unit tests cover concurrent startup, stale

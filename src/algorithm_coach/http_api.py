@@ -289,6 +289,8 @@ def _execute(data_dir: Path, operation: str, arguments: dict) -> dict:
             return coach.get_plan(arguments["date"])
         if operation == "scores":
             return coach.get_topic_scores(arguments.get("language"))
+        if operation == "progress":
+            return coach.get_practice_progress(arguments.get("language"))
         if operation == "feedback":
             return _submission_data(coach, coach.submit_feedback(**arguments))
         if operation == "solution":
@@ -455,6 +457,15 @@ def create_app(data_dir: Path, static_dir: Path | None = None, allowed_origin: s
         Dependencies: Coach.get_topic_scores through _execute.
         """
         return {"ok": True, "data": _execute(directory, "scores", _store_arguments(request, {"language": language}))}
+
+    @app.get("/v1/progress")
+    def progress(request: Request, language: str | None = None) -> dict:
+        """Inputs: an optional language. Outputs: daily activity and problem results.
+
+        Logic: use the core's read-only progress contract without writing.
+        Dependencies: Coach.get_practice_progress through _execute.
+        """
+        return {"ok": True, "data": _execute(directory, "progress", _store_arguments(request, {"language": language}))}
 
     @app.post("/v1/attempts/{attempt_id}/feedback")
     def feedback(attempt_id: str, request: Request) -> dict:

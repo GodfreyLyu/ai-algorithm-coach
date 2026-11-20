@@ -18,6 +18,7 @@ GET requests do not initialize data, create plans, or rebuild learning state.
 | `POST /v1/attempts/{id}/feedback` | Append progress or correction through Coach. |
 | `GET /v1/submissions/{id}` | Read a receipt and its immutable feedback revision. |
 | `GET /v1/scores` | Read topic rates for a language. |
+| `GET /v1/progress` | Read daily result counts and latest results per problem. |
 
 Feedback writes require `X-Coach-Store-Id`. Reads check it when supplied.
 The identity binds the workspace UUID to the canonical database location.
