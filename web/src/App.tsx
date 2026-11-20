@@ -58,7 +58,7 @@ function displayDate(value: string): string {
 
 /**
  * Inputs: None.
- * Outputs: The result reference for the plan toolbar.
+ * Outputs: The result reference for the plan sidebar.
  * Logic: Explain the six self-reported outcomes in one disclosure.
  * Dependencies: The core feedback meanings.
  */
@@ -69,26 +69,41 @@ function ResultGuide() {
 }
 
 /**
- * Inputs: A plan item, bound store ID, editor state, and shared callbacks.
- * Outputs: One aligned problem row and its optional editor.
+ * Inputs: A saved plan item, its selection state, and the shared navigation lock.
+ * Outputs: One sidebar button for a stable practice attempt.
+ * Logic: Select the named attempt without closing the current editor.
+ * Dependencies: The saved plan and the parent's selection callback.
+ */
+function PlanButton({ item, selected, locked, onSelect }: {
+  item: PlanItem; selected: boolean; locked: boolean; onSelect: (id: string) => void;
+}) {
+  /**
+   * Inputs: A click on this saved problem.
+   * Outputs: This attempt's stable ID to the parent.
+   * Logic: Preserve the pending-operation lock when changing problems.
+   * Dependencies: The shared lock and onSelect callback.
+   */
+  function selectAttempt() { if (!locked) onSelect(item.attempt_id); }
+
+  return <button type="button" className={`plan-item ${selected ? "selected" : ""}`} data-plan-attempt-id={item.attempt_id}
+    aria-label={`Open ${item.problem.title}`} aria-current={selected ? "true" : undefined} disabled={locked} onClick={selectAttempt}>
+    <span className="plan-item-number">{item.position}</span><span className="plan-item-title">{item.problem.title}</span>
+  </button>;
+}
+
+/**
+ * Inputs: A selected plan item, bound store ID, retained drafts, and shared callbacks.
+ * Outputs: The selected problem and its always-visible editor.
  * Logic: Show current evidence before editing a specific stable attempt.
  * Dependencies: FeedbackForm and the saved plan contract.
  */
-function ProblemCard({ item, storeId, drafts, open, locked, workspaceLocked, onOpen, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: {
-  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; open: boolean; locked: boolean; workspaceLocked: boolean; onOpen: (id: string) => void;
+function ProblemCard({ item, storeId, drafts, workspaceLocked, onSaved, onPendingChange, onReload, onWorkspaceMismatch }: {
+  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; workspaceLocked: boolean;
   onSaved: (receipt: Receipt) => void; onPendingChange: (id: string | null) => void; onReload: () => void;
   onWorkspaceMismatch: () => void;
 }) {
   const feedback = item.attempt.feedback;
   const result = feedback?.result;
-
-  /**
-   * Inputs: A click to open or close this card's editor.
-   * Outputs: The clicked attempt ID to the parent.
-   * Logic: Keep pending operations in their current mounted editor.
-   * Dependencies: onOpen and the shared lock state.
-   */
-  function toggleEditor() { if (!locked) onOpen(item.attempt_id); }
 
   /**
    * Inputs: A tag from this problem's metadata.
@@ -99,18 +114,17 @@ function ProblemCard({ item, storeId, drafts, open, locked, workspaceLocked, onO
   function renderTag(tag: string) { return <span key={tag} className="tag">{tag.replaceAll("-", " ")}</span>; }
 
   return (
-    <article className={`problem-card ${open ? "open" : ""}`} data-attempt-id={item.attempt_id}>
-      <div className="problem-header"><span className="problem-number">{String(item.position).padStart(2, "0")}</span>
-        <div className="problem-content"><h2><a href={item.problem.url} target="_blank" rel="noreferrer">{item.problem.title}<span aria-hidden="true"> ↗</span></a></h2>
-          <div className="problem-meta"><span className={`difficulty ${item.problem.difficulty}`}>{item.problem.difficulty}</span><span>{item.problem.id.replace("leetcode:", "#")}</span><span className="reason-label">{item.reason.replaceAll("_", " ")}</span><span className="attempt-language">{item.attempt.language}</span><span className="problem-tags">{item.problem.tags.map(renderTag)}</span></div>
+    <article className="problem-card" data-attempt-id={item.attempt_id} aria-labelledby={`problem-${item.attempt_id}`}>
+      <div className="problem-header">
+        <div className="problem-content"><h2 id={`problem-${item.attempt_id}`}><span className="problem-id">{item.problem.id.replace("leetcode:", "#")}</span>{" "}<a href={item.problem.url} target="_blank" rel="noreferrer">{item.problem.title}<span aria-hidden="true"> ↗</span></a></h2>
+          <div className="problem-meta"><span className={`difficulty ${item.problem.difficulty}`}>{item.problem.difficulty}</span><span className="problem-tags">{item.problem.tags.map(renderTag)}</span><span className="attempt-language">{item.attempt.language}</span><span className="reason-label">{item.reason.replaceAll("_", " ")}</span></div>
         </div>
-        <div className="problem-status"><span className={`status-dot ${result ? `result-${result}` : ""}`} aria-hidden="true" />
-          <span>{result ? `${result} · ${RESULT_LABELS[result]}` : "No result recorded"}</span>
+        <div className="problem-summary"><div className="problem-status"><span className={`status-dot ${result ? `result-${result}` : ""}`} aria-hidden="true" />
+          <span>{result ? `${result} · ${RESULT_LABELS[result]}` : "No result recorded"}</span></div>
+          {feedback?.elapsed_minutes != null && <div className="problem-time">{feedback.elapsed_minutes} <span className="time-unit">min</span></div>}
         </div>
-        <div className="problem-time">{feedback?.elapsed_minutes != null ? <>{feedback.elapsed_minutes} <span className="time-unit">min</span></> : <><span aria-hidden="true">—</span><span className="sr-only">Time not recorded</span></>}</div>
-        <button type="button" className={`record-button ${open ? "active" : ""}`} onClick={toggleEditor} disabled={locked} aria-expanded={open} aria-controls={`editor-${item.attempt_id}`} aria-label={`${open ? "Close" : feedback ? "Update record for" : "Record result for"} ${item.problem.title}`}>{open ? "Close" : feedback ? "Update record" : "Record result"}<span aria-hidden="true">{open ? " −" : " +"}</span></button>
       </div>
-      <div id={`editor-${item.attempt_id}`} hidden={!open}>{open && <FeedbackForm key={`${storeId}:${item.attempt_id}:${item.attempt.revision}`} item={item} storeId={storeId} drafts={drafts} workspaceLocked={workspaceLocked} onSaved={onSaved} onPendingChange={onPendingChange} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />}</div>
+      <FeedbackForm key={`${storeId}:${item.attempt_id}:${item.attempt.revision}`} item={item} storeId={storeId} drafts={drafts} workspaceLocked={workspaceLocked} onSaved={onSaved} onPendingChange={onPendingChange} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />
     </article>
   );
 }
@@ -287,11 +301,11 @@ export function App() {
 
   /**
    * Inputs: A clicked practice attempt ID.
-   * Outputs: The opened editor or a closed editor.
-   * Logic: Keep exactly one record editor visible.
-   * Dependencies: The current editor and pending state.
+   * Outputs: The selected editor in the detail area.
+   * Logic: Keep one editor visible and preserve drafts for other attempts.
+   * Dependencies: The pending lock and retained drafts.
    */
-  function toggleAttempt(id: string) { if (!locked) setActiveAttempt(activeAttempt === id ? null : id); }
+  function selectAttempt(id: string) { if (!locked) setActiveAttempt(id); }
 
   /**
    * Inputs: The attempt with an uncertain operation, or null after resolution.
@@ -330,49 +344,55 @@ export function App() {
 
   /**
    * Inputs: One published plan item.
-   * Outputs: A keyed problem card with its own revision-bound form.
-   * Logic: Keep form identity tied to the saved attempt, not its list position.
-   * Dependencies: ProblemCard and the app callbacks.
+   * Outputs: A keyed button in the daily problem navigation.
+   * Logic: Compare the derived selection with the stable attempt identity.
+   * Dependencies: PlanButton and the selected plan item.
    */
-  function renderProblem(item: PlanItem) {
-    return <ProblemCard key={item.attempt_id} item={item} storeId={context!.store_id} drafts={drafts.current} open={activeAttempt === item.attempt_id} locked={locked} workspaceLocked={workspaceLost}
-      onOpen={toggleAttempt} onSaved={handleSaved} onPendingChange={handlePendingChange} onReload={reloadRecords} onWorkspaceMismatch={handleWorkspaceMismatch} />;
+  function renderPlanButton(item: PlanItem) {
+    return <PlanButton key={item.attempt_id} item={item} selected={selectedItem?.attempt_id === item.attempt_id} locked={locked} onSelect={selectAttempt} />;
   }
 
   let recordedCount = 0;
   if (plan) for (const item of plan.items) if (item.attempt.feedback?.result) recordedCount += 1;
+  let selectedItem = plan?.items[0] ?? null;
+  if (plan && activeAttempt) for (const item of plan.items) {
+    if (item.attempt_id === activeAttempt) { selectedItem = item; break; }
+  }
 
   return (
     <div className="app-shell">
-      <header className="app-header"><div className="brand"><span className="brand-mark" aria-hidden="true">a<span>c</span></span><span>algorithm<span className="brand-light">coach</span></span></div>
+      <header className="app-header"><div className="brand">Algorithm Coach</div>
         <div className="header-detail"><span className="local-dot" />Local workspace{context && <><span className="header-divider">/</span><span>{context.language}</span></>}</div>
       </header>
-      <div className="navigation-row"><nav className="view-tabs" aria-label="Views"><button type="button" aria-current={tab === "plan" ? "page" : undefined} className={tab === "plan" ? "selected" : ""} onClick={showPlan} disabled={locked}>Plan &amp; records</button><button type="button" aria-current={tab === "scores" ? "page" : undefined} className={tab === "scores" ? "selected" : ""} onClick={showScores} disabled={locked}>Topic scores</button></nav>
+      <div className="navigation-row"><nav className="view-tabs" aria-label="Views"><button type="button" aria-current={tab === "plan" ? "page" : undefined} className={tab === "plan" ? "selected" : ""} onClick={showPlan} disabled={locked}>Training record</button><button type="button" aria-current={tab === "scores" ? "page" : undefined} className={tab === "scores" ? "selected" : ""} onClick={showScores} disabled={locked}>Topic scores</button></nav>
         {context && <span className="timezone-label">{context.timezone}</span>}
       </div>
-      <main>
+      <main className="app-main">
         {startupError && <div className="empty-state startup-error" role="alert"><span className="empty-icon" aria-hidden="true">!</span><h1>{startupError.title}</h1><p>{startupError.message}</p></div>}
         {!context && !startupError && <div className="loading-panel" role="status">Opening your practice record…</div>}
         {workspaceLost && <div className="message error" role="alert"><strong>This is a different training workspace.</strong><p>Your draft remains here. Start a new session in your Skill and use its feedback link. This page will not switch databases.</p></div>}
-        {context && tab === "scores" && <ScoresView scores={scores} loading={scoresLoading} error={scoresError} />}
+        {context && tab === "scores" && <div className="scores-view"><ScoresView scores={scores} loading={scoresLoading} error={scoresError} /></div>}
         {context && tab === "plan" && <>
-          <div className="view-heading"><div><h1>Training record</h1><p className="view-description">{trainingDate ? displayDate(trainingDate) : "Choose a date to read its saved plan"}</p></div>
-            <label className="date-control"><span>Training date</span><input aria-label="Training date" type="date" min="0001-01-01" max="9999-12-31" value={trainingDate} onChange={changeDate} disabled={locked} /></label>
-          </div>
-          {notice && <div className="message success" role="status"><span className="success-check" aria-hidden="true">✓</span>{notice}</div>}
-          <div className="plan-layout"><div className="plan-column">
-            <div className="plan-toolbar"><div className="section-heading"><h2>Saved plan</h2><p>{plan ? `${plan.items.length} problems · ${recordedCount} with a result` : "Your saved daily plan"}</p></div>
-              <div className="plan-tools"><button type="button" className="text-button" onClick={reloadRecords} disabled={locked || planLoading || !trainingDate}>Refresh</button></div>
+          <h1 className="sr-only">Training record</h1>
+          <div className="plan-layout"><aside className="plan-sidebar" aria-label="Daily training plan">
+              <label className="date-control"><span>Training date</span><input aria-label="Training date" type="date" min="0001-01-01" max="9999-12-31" value={trainingDate} onChange={changeDate} disabled={locked} /></label>
+              <p className="sidebar-date">{trainingDate ? displayDate(trainingDate) : "Choose a training date"}</p>
+              <div className="sidebar-heading"><h2>Saved plan</h2><p>{plan ? `${plan.items.length} problems · ${recordedCount} with a result` : "Your saved daily plan"}</p></div>
+              {plan && plan.items.length > 0 && <nav className="problem-navigation" aria-label="Saved plan problems">{plan.items.map(renderPlanButton)}</nav>}
+              <div className="sidebar-tools"><button type="button" className="text-button" onClick={reloadRecords} disabled={locked || planLoading || !trainingDate}>Refresh</button>
               <details className="result-help"><summary>Result guide <span>A–F</span></summary><ResultGuide /></details>
-            </div>
+              </div>
+            </aside><div className="plan-detail">
+            {notice && <div className="message success" role="status"><span className="success-check" aria-hidden="true">✓</span>{notice}</div>}
             {planError && <div className="message error" role="alert"><strong>The plan could not be read.</strong><p>{planError}</p></div>}
             {planLoading && <div className="loading-panel" role="status">{plan ? "Refreshing the saved plan…" : "Reading the saved plan…"}</div>}
             {!trainingDate && !planLoading && <div className="empty-state"><h2>Choose a training date</h2><p>Select a date to read its existing plan.</p></div>}
             {trainingDate && !planLoading && !plan && !planError && <div className="empty-state"><h2>No saved plan for this date</h2><p>Ask your Algorithm Coach Skill to generate a plan.<br />Then refresh here to record your practice.</p></div>}
             {plan && <>
               {Boolean(plan.current_policy_conflicts?.length) && <div className="message warning"><strong>This saved plan has a scope conflict.</strong><p>Review it in your Skill. Its published items have been preserved.</p></div>}
-              {plan.items.length > 0 && <div className="problem-list-heading" aria-hidden="true"><span>#</span><span>Problem</span><span>Result</span><span>Time</span><span>Record</span></div>}
-              <div className="problem-list">{plan.items.map(renderProblem)}</div>
+              {!selectedItem && !planLoading && <div className="empty-state"><h2>No problems in this saved plan</h2><p>Review the plan in your Algorithm Coach Skill.</p></div>}
+              {selectedItem && <ProblemCard key={selectedItem.attempt_id} item={selectedItem} storeId={context.store_id} drafts={drafts.current} workspaceLocked={workspaceLost}
+                onSaved={handleSaved} onPendingChange={handlePendingChange} onReload={reloadRecords} onWorkspaceMismatch={handleWorkspaceMismatch} />}
             </>}
           </div></div>
         </>}

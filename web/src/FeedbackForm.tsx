@@ -1,5 +1,5 @@
-/** File purpose: Edit one practice record with explicit modes and retry-safe saves. */
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+/** File purpose: Edit code and practice feedback with explicit corrections and retry-safe saves. */
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { ApiError, errorMessage, request } from "./api";
 import type { ComplexityItem, ComplexityStatus, Feedback, FeedbackRequest, PlanItem, Receipt, Result, SavedFeedback, SavedSolution, SolutionDocument, SolutionRequest } from "./types";
 
@@ -12,6 +12,8 @@ export interface EditorDraft {
   touched: Set<Field>;
   mode: Mode;
   solution?: SolutionDocument;
+  solutionRevision?: number;
+  solutionDirty?: boolean;
 }
 
 const RESULTS: { value: Result; label: string; detail: string }[] = [
@@ -22,6 +24,8 @@ const RESULTS: { value: Result; label: string; detail: string }[] = [
   { value: "E", label: "Defer", detail: "Do it later" },
   { value: "F", label: "Skip", detail: "End this attempt" },
 ];
+
+const COMPLEXITIES = ["O(1)", "O(log n)", "O(n)", "O(n log n)", "O(n²)", "O(n³)", "O(2ⁿ)", "O(n!)", "O(n+m)", "O(nm)"];
 
 interface FormProps {
   item: PlanItem;
@@ -114,11 +118,36 @@ function ResultChoice({ option, selected, onSelect }: {
   function selectResult() { onSelect(option.value); }
   return (
     <label className={`result-choice ${selected ? "selected" : ""}`} data-result={option.value}>
-      <span className="result-letter">{option.value}</span>
-      <span><strong>{option.label}</strong><small>{option.detail}</small></span>
       <input type="radio" name="result" value={option.value} checked={selected} onChange={selectResult} />
+      <span className="result-letter">{option.value}</span>
+      <span><strong>{option.label}</strong><small className="sr-only">{option.detail}</small></span>
     </label>
   );
+}
+
+/**
+ * Inputs: A complexity field, its current value, and a change callback.
+ * Outputs: A native select with presets and any existing custom value.
+ * Logic: Preserve saved text exactly and leave untouched values unchanged.
+ * Dependencies: The complexity presets and the shared field change handler.
+ */
+function ComplexitySelect({ name, label, value, onChange }: {
+  name: "time_complexity" | "space_complexity"; label: string; value: string;
+  onChange: (event: ChangeEvent<HTMLSelectElement>) => void;
+}) {
+  /**
+   * Inputs: One supported complexity expression.
+   * Outputs: A native option with its exact stored value.
+   * Logic: Use the same text for display and feedback submission.
+   * Dependencies: The complexity preset list.
+   */
+  function renderOption(complexity: string) { return <option key={complexity} value={complexity}>{complexity}</option>; }
+
+  return <label className="field"><span>{label}</span><select name={name} aria-label={label} value={value} onChange={onChange}>
+    <option value="">Not recorded</option>
+    {value !== "" && !COMPLEXITIES.includes(value) && <option value={value}>{value}</option>}
+    {COMPLEXITIES.map(renderOption)}
+  </select></label>;
 }
 
 const REVIEW_LABELS = {
@@ -144,19 +173,40 @@ function conclusion(item: ComplexityItem | null, field: string): string | null {
 }
 
 /**
+ * Inputs: One status response and the attempt's expected code language.
+ * Outputs: A saved solution document and its bound feedback revision, or null.
+ * Logic: Read known evidence fields without confusing their revision with the current attempt.
+ * Dependencies: The solution evidence response contract.
+ */
+function solutionFromStatus(item: ComplexityItem | null, language: string): { document: SolutionDocument; revision: number } | null {
+  const evidence = item?.evidence;
+  const body = evidence?.body;
+  const revision = evidence?.feedback_revision;
+  if (!body || typeof body !== "object" || Array.isArray(body) || typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) return null;
+  const saved = body as Record<string, unknown>;
+  if (typeof saved.code !== "string" || saved.language !== language ||
+      (saved.input_definition !== undefined && saved.input_definition !== null && typeof saved.input_definition !== "string")) return null;
+  const document: SolutionDocument = { code: saved.code, language };
+  if (saved.input_definition !== undefined) document.input_definition = saved.input_definition as string | null;
+  return { document, revision };
+}
+
+/**
  * Inputs: One attempt, its store, retained drafts, and shared lock callbacks.
  * Outputs: A code evidence form and the latest scoped review.
- * Logic: Save code without calling a model and retain uncertain submissions for retry.
+ * Logic: Retain revision-bound code snapshots and uncertain submissions without calling a model.
  * Dependencies: React, the solution API, and immutable submission receipts.
  */
-function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onReload, onWorkspaceMismatch }: {
-  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; disabled: boolean;
+function SolutionForm({ item, storeId, drafts, disabled, feedbackDirty, onPendingChange, onReload, onWorkspaceMismatch }: {
+  item: PlanItem; storeId: string; drafts: Map<string, EditorDraft>; disabled: boolean; feedbackDirty: boolean;
   onPendingChange: (id: string | null) => void; onReload: () => void; onWorkspaceMismatch: () => void;
 }) {
   const draftKey = `${storeId}:${item.attempt_id}:solution`;
-  const retained = drafts.get(draftKey)?.solution;
-  const [document, setDocument] = useState<SolutionDocument>(retained ?? { code: "", language: item.attempt.language });
-  const [dirty, setDirty] = useState(retained !== undefined);
+  const retained = drafts.get(draftKey);
+  const modification = useRef(0);
+  const writeGeneration = useRef(0);
+  const [document, setDocument] = useState<SolutionDocument>(retained?.solution ?? { code: "", language: item.attempt.language });
+  const [dirty, setDirty] = useState(retained?.solution !== undefined && (retained.solutionDirty !== false || retained.solutionRevision !== item.attempt.revision));
   const [status, setStatus] = useState<ComplexityItem | null>(null);
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<SolutionRequest | null>(null);
@@ -168,21 +218,35 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
   /**
    * Inputs: Mount or a changed attempt revision.
    * Outputs: The latest status and a cancellation handler.
-   * Logic: Read only the bound attempt and ignore a response after unmount.
-   * Dependencies: AbortController, the status endpoint, and current identity.
+   * Logic: Restore saved code only before local edits and ignore obsolete reads.
+   * Dependencies: AbortController, the status endpoint, and modification guards.
    */
   function loadReview() {
     const controller = new AbortController();
+    const readModification = modification.current;
+    const readWriteGeneration = writeGeneration.current;
+    const canHydrate = drafts.get(draftKey)?.solution === undefined;
     /**
      * Inputs: None.
-     * Outputs: A saved status or a visible read error.
-     * Logic: Keep an unavailable review distinct from an unreviewed solution.
-     * Dependencies: The bound request and effect cancellation signal.
+     * Outputs: A saved status and an untouched editor's code, or a visible read error.
+     * Logic: Preserve local drafts and require a new save for stale evidence.
+     * Dependencies: The bound request, solutionFromStatus, and modification guards.
      */
     async function readReview() {
       try {
         const data = await request<ComplexityStatus>(`/v1/attempts/${encodeURIComponent(item.attempt_id)}/complexity`, { headers: { "X-Coach-Store-Id": storeId }, signal: controller.signal });
-        if (!controller.signal.aborted) setStatus(data.items[0] ?? null);
+        if (controller.signal.aborted) return;
+        const savedStatus = data.items[0] ?? null;
+        if (writeGeneration.current === readWriteGeneration) setStatus(savedStatus);
+        if (canHydrate && modification.current === readModification && drafts.get(draftKey)?.solution === undefined) {
+          const saved = solutionFromStatus(savedStatus, item.attempt.language);
+          if (saved) {
+            const stale = saved.revision !== item.attempt.revision;
+            setDocument(saved.document);
+            setDirty(stale);
+            drafts.set(draftKey, { values: makeDraft(null), touched: new Set(), mode: "", solution: saved.document, solutionRevision: saved.revision, solutionDirty: stale });
+          }
+        }
       } catch (failure) {
         if (!controller.signal.aborted) {
           setError(errorMessage(failure));
@@ -212,17 +276,18 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
    * Dependencies: Controlled document state and the store-bound draft map.
    */
   function changeDocument(event: ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) {
+    modification.current += 1;
     const next = { ...document, [event.currentTarget.name]: event.currentTarget.value };
     setDocument(next);
     setDirty(true);
-    drafts.set(draftKey, { values: makeDraft(null), touched: new Set(), mode: "", solution: next });
+    drafts.set(draftKey, { values: makeDraft(null), touched: new Set(), mode: "", solution: next, solutionRevision: item.attempt.revision, solutionDirty: true });
     setError(null);
   }
 
   /**
    * Inputs: A core receipt and the exact request being acknowledged.
-   * Outputs: A confirmed code save and released navigation lock.
-   * Logic: Match code identity, attempt, and feedback version before showing saved.
+   * Outputs: A clean in-page code snapshot and released navigation lock.
+   * Logic: Match code identity, attempt, and feedback version before retaining saved code.
    * Dependencies: Immutable receipt fields and the retained operation.
    */
   async function acceptSolution(saved: SavedSolution, original: SolutionRequest) {
@@ -235,10 +300,12 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
         receipt.feedback_revision !== original.expected_revision || !receipt.evidence_id || receipt.code_hash !== expectedHash || !receipt.payload_hash) {
       throw new Error("The code save receipt could not be matched.");
     }
+    modification.current += 1;
+    writeGeneration.current += 1;
     setPending(null);
     setDirty(false);
     setError(null);
-    drafts.delete(draftKey);
+    drafts.set(draftKey, { values: makeDraft(null), touched: new Set(), mode: "", solution: original.document, solutionRevision: original.expected_revision, solutionDirty: false });
     onPendingChange(null);
     setStatus({ attempt_id: item.attempt_id, feedback_revision: original.expected_revision, status: "pending", evidence: { id: receipt.evidence_id, code_hash: receipt.code_hash }, review: null });
   }
@@ -268,6 +335,8 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
    * Dependencies: The store-bound solution endpoint and receipt validator.
    */
   async function sendSolution(original: SolutionRequest) {
+    modification.current += 1;
+    writeGeneration.current += 1;
     setSending(true);
     setPending(original);
     setError(null);
@@ -292,7 +361,7 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
    */
   function submitSolution(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (locked || !dirty || !document.code.trim()) return;
+    if (locked || feedbackDirty || !dirty || !document.code.trim()) return;
     const body: SolutionDocument = { code: document.code, language: item.attempt.language };
     if (document.input_definition?.trim()) body.input_definition = document.input_definition;
     void sendSolution({ submission_id: crypto.randomUUID(), expected_revision: item.attempt.revision, document: body });
@@ -305,7 +374,9 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
    * Dependencies: The pending request, receipt endpoint, and sendSolution.
    */
   async function retrySolution() {
-    if (!pending || sending || disabled || workspaceMismatch) return;
+    if (!pending || sending || disabled || feedbackDirty || workspaceMismatch) return;
+    modification.current += 1;
+    writeGeneration.current += 1;
     const original = pending;
     setSending(true);
     try {
@@ -320,21 +391,19 @@ function SolutionForm({ item, storeId, drafts, disabled, onPendingChange, onRelo
   }
 
   return <form className="feedback-form solution-form" onSubmit={submitSolution}>
-    <details className="solution-details">
-      <summary>Code and complexity review</summary>
-      <p className="form-note" aria-live="polite">{status ? REVIEW_LABELS[status.status] : "Loading review status…"}</p>
-      {status?.review && <div className="saved-summary"><span>Time: {conclusion(status, "time_complexity") ?? "Not determined"} · Space: {conclusion(status, "space_complexity") ?? "Not determined"}</span></div>}
-      {status?.review && <p className="form-note">{conclusion(status, "reasoning")}</p>}
-      <p className="form-note">Save your feedback changes first. Code is reviewed when your Skill session runs; saving code does not confirm AC or independent mastery.</p>
-      <fieldset className="optional-grid" disabled={locked}>
-        <label className="field full-width"><span>Solution code <small>{item.attempt.language}</small></span><textarea name="code" value={document.code} onChange={changeDocument} rows={8} maxLength={200000} spellCheck={false} placeholder="Paste the code for this attempt" /></label>
-        <label className="field full-width"><span>Input sizes <small>optional</small></span><input name="input_definition" value={document.input_definition ?? ""} onChange={changeDocument} maxLength={4000} placeholder="For example, n is the array length" /></label>
-      </fieldset>
-      {error && <div className="message error" role="alert"><p>{error}</p>{conflict && <button type="button" className="secondary-button" onClick={onReload}>Reload current record</button>}</div>}
-      <div className="form-footer"><span className="save-state" aria-live="polite">{sending ? "Saving code…" : pending ? "Code save awaiting confirmation" : dirty ? "Unsaved code · kept in this page" : "Code and feedback stay separate"}</span>
-        {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" disabled={disabled} onClick={retrySolution}>Retry code save</button> : <button type="submit" className="primary-button" disabled={locked || !dirty || !document.code.trim()}>Save code for review</button>}
-      </div>
-    </details>
+    <div className="solution-heading"><h3>Solution code</h3><span>{item.attempt.language}</span></div>
+    <fieldset className="solution-fields" disabled={locked}>
+      <label className="field solution-code-field"><span className="sr-only">Solution code</span><textarea className="solution-code" name="code" value={document.code} onChange={changeDocument} rows={16} wrap="off" maxLength={200000} spellCheck={false} placeholder="Paste the code for this attempt" /></label>
+      <label className="field input-definition-field"><span>Input sizes <small>optional</small></span><input name="input_definition" value={document.input_definition ?? ""} onChange={changeDocument} maxLength={4000} placeholder="For example, n is the array length" /></label>
+    </fieldset>
+    {error && <div className="message error" role="alert"><p>{error}</p>{conflict && <button type="button" className="secondary-button" onClick={onReload}>Reload current record</button>}</div>}
+    <div className="form-footer"><span className="save-state" aria-live="polite">{sending ? "Saving code…" : pending ? "Code save awaiting confirmation" : dirty ? "Unsaved code · kept in this page" : "Code and feedback stay separate"}</span>
+      {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" disabled={disabled || feedbackDirty} onClick={retrySolution}>Retry code save</button> : <button type="submit" className="primary-button" disabled={locked || feedbackDirty || !dirty || !document.code.trim()}>Save code for review</button>}
+    </div>
+    <p className="form-note review-status" aria-live="polite">{status ? REVIEW_LABELS[status.status] : "Loading review status…"}</p>
+    {status?.review && <div className="saved-summary"><span>Time: {conclusion(status, "time_complexity") ?? "Not determined"} · Space: {conclusion(status, "space_complexity") ?? "Not determined"}</span></div>}
+    {status?.review && <p className="form-note">{conclusion(status, "reasoning")}</p>}
+    <p className="form-note">Save your feedback changes first. Code is reviewed when your Skill session runs; saving code does not confirm AC or independent mastery.</p>
   </form>;
 }
 
@@ -349,10 +418,9 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
   const [boundStoreId] = useState(storeId);
   const draftKey = `${boundStoreId}:${item.attempt_id}:${item.attempt.revision}`;
   const retained = drafts.get(draftKey);
-  const isComplete = feedback?.result === "A" || feedback?.result === "B" || feedback?.result === "C";
   const [draft, setDraft] = useState<Draft>(retained?.values ?? makeDraft(feedback));
   const [touched, setTouched] = useState<Set<Field>>(retained?.touched ?? new Set());
-  const [mode, setMode] = useState<Mode>(retained?.mode ?? (isComplete ? "" : "progress"));
+  const [mode, setMode] = useState<"progress" | "correction">(retained?.mode === "correction" ? "correction" : "progress");
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<FeedbackRequest | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -360,7 +428,7 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
   const [solutionPending, setSolutionPending] = useState(false);
   const workspaceMismatch = workspaceLocked || error?.workspaceMismatch === true;
   const locked = sending || pending !== null || acknowledged || solutionPending || error?.conflict === true || workspaceMismatch;
-  const editDisabled = locked || mode === "";
+  const editDisabled = locked;
 
   /**
    * Inputs: A field name and its explicit new string value.
@@ -405,15 +473,22 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
   function clearResult() { if (mode === "correction") changeField("result", ""); }
 
   /**
-   * Inputs: An explicit choice of progress or correction mode.
-   * Outputs: The selected editing mode.
-   * Logic: Never infer correction from edits to a completed record.
-   * Dependencies: The mode select and local state.
+   * Inputs: A deliberate correction or cancellation action.
+   * Outputs: Explicit correction mode, or a clean progress draft.
+   * Logic: Restore saved values on cancellation so correction edits cannot become progress.
+   * Dependencies: The current feedback snapshot, local state, and draft cache.
    */
-  function handleModeChange(event: ChangeEvent<HTMLSelectElement>) {
-    const nextMode = event.currentTarget.value as Mode;
-    setMode(nextMode);
-    if (touched.size) drafts.set(draftKey, { values: draft, touched, mode: nextMode });
+  function toggleCorrection() {
+    if (locked || !feedback) return;
+    if (mode === "correction") {
+      setMode("progress");
+      setDraft(makeDraft(feedback));
+      setTouched(new Set());
+      drafts.delete(draftKey);
+    } else {
+      setMode("correction");
+      drafts.set(draftKey, { values: draft, touched, mode: "correction" });
+    }
     setError(null);
   }
 
@@ -561,39 +636,38 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
   }
 
   return (
-    <>
-    <form className="feedback-form" onSubmit={handleSubmit}>
+    <div className="attempt-editor">
+    <SolutionForm item={item} storeId={boundStoreId} drafts={drafts} disabled={sending || pending !== null || error?.conflict === true || workspaceMismatch} feedbackDirty={touched.size > 0}
+      onPendingChange={handleSolutionPending} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />
+    <form className="feedback-form record-form" onSubmit={handleSubmit}>
+      <h3>Practice feedback</h3>
       {feedback && <div className="saved-summary"><span className="tiny-label">Saved record · revision {item.attempt.revision}</span>
         <span>{feedback.result ? `Result ${feedback.result}` : "Result not recorded"}{feedback.elapsed_minutes != null ? ` · ${feedback.elapsed_minutes} min` : ""}</span></div>}
-      {feedback && <label className="field mode-field"><span>How are you updating this record?</span>
-        <select value={mode} onChange={handleModeChange} disabled={locked}>
-          <option value="">Choose an update</option><option value="progress">Add progress or details</option><option value="correction">Correct an earlier answer</option>
-        </select></label>}
       {mode === "correction" && <p className="form-note">This adds a correction. Earlier answers stay in your history.</p>}
       <fieldset className="result-fieldset" disabled={editDisabled}>
-        <legend>How did it go?</legend>
-        <p className="result-group-label">Reported AC</p><div className="result-grid">{RESULTS.slice(0, 3).map(renderResult)}</div>
-        <p className="result-group-label">Continue or set aside</p><div className="result-grid">{RESULTS.slice(3).map(renderResult)}</div>
+        <legend>Result</legend><div className="result-list">{RESULTS.map(renderResult)}</div>
         {mode === "correction" && draft.result !== "" && <button type="button" className="text-button" onClick={clearResult}>Clear reported result</button>}
       </fieldset>
       <fieldset className="entry-fields" disabled={editDisabled}>
         {(draft.result === "E" || draft.defer_until !== "" || touched.has("defer_until")) && <label className="field schedule-field"><span>Defer until <small>for E</small></span><input type="date" name="defer_until" value={draft.defer_until} onChange={handleFieldChange} /><small>Optional date for deferred practice</small></label>}
         {(draft.result === "F" || draft.skip_until !== "" || touched.has("skip_until")) && <label className="field schedule-field"><span>Eligible again <small>for F</small></span><input type="date" name="skip_until" value={draft.skip_until} onChange={handleFieldChange} /><small>Optional date for this skipped problem to become eligible again</small></label>}
         <label className="field time-field"><span>Total time <small>minutes</small></span>
-          <input type="number" min="0" step="any" inputMode="decimal" name="elapsed_minutes" value={draft.elapsed_minutes} onChange={handleFieldChange} placeholder="Not recorded" />
+          <input type="number" min="0" step="any" inputMode="decimal" name="elapsed_minutes" value={draft.elapsed_minutes} onChange={handleFieldChange} placeholder="Optional" />
           <small>Use the total for this attempt, including earlier sessions.</small></label>
+        <div className="complexity-fields">
+          <ComplexitySelect name="time_complexity" label="Time complexity" value={draft.time_complexity} onChange={handleFieldChange} />
+          <ComplexitySelect name="space_complexity" label="Space complexity" value={draft.space_complexity} onChange={handleFieldChange} />
+        </div>
+        <label className="field blocked-field"><span>Where did you get stuck? <small>optional</small></span><textarea name="blocked_on" value={draft.blocked_on} onChange={handleFieldChange} rows={2} maxLength={4000} placeholder="A brief note, if useful" /></label>
         <p className="form-note">Result changes use the current time. Corrections and detail-only updates keep the recorded practice time.</p>
         <details className="optional-details"><summary>More details <span>optional</span></summary>
           <div className="optional-grid">
-            <label className="field full-width"><span>Where did you get stuck?</span><textarea name="blocked_on" value={draft.blocked_on} onChange={handleFieldChange} rows={2} maxLength={4000} placeholder="A brief note, if useful" /></label>
             <label className="field"><span>Explain the solution aloud</span><select name="explanation" value={draft.explanation} onChange={handleFieldChange}>
               <option value="">Not recorded</option><option value="not_tried">Not tried</option><option value="partial">Partly explained</option><option value="clear">Clearly explained</option><option value="uncertain">Uncertain</option></select></label>
             <label className="field"><span>Boundary tests checked?</span><select name="boundary_tests" value={draft.boundary_tests} onChange={handleFieldChange}>
               <option value="">Not recorded</option><option value="true">Yes</option><option value="false">No</option></select></label>
             <label className="field"><span>Familiarity</span><select name="proficiency" value={draft.proficiency} onChange={handleFieldChange}>
               <option value="">Not recorded</option><option value="1">1 · New to me</option><option value="2">2 · Needs support</option><option value="3">3 · Getting familiar</option><option value="4">4 · Comfortable</option><option value="5">5 · Very familiar</option></select></label>
-            <label className="field"><span>Time complexity</span><input name="time_complexity" value={draft.time_complexity} onChange={handleFieldChange} maxLength={4000} placeholder="For example, O(n)" /></label>
-            <label className="field"><span>Space complexity</span><input name="space_complexity" value={draft.space_complexity} onChange={handleFieldChange} maxLength={4000} placeholder="For example, O(1)" /></label>
           </div>
         </details>
       </fieldset>
@@ -601,12 +675,12 @@ export function FeedbackForm({ item, storeId, drafts, workspaceLocked, onSaved, 
         {error.conflict && <button type="button" className="secondary-button" onClick={reloadRecord}>Reload current record</button>}
       </div>}
       <div className="form-footer"><span className="save-state" aria-live="polite">{workspaceMismatch ? "Workspace changed · save unconfirmed" : sending ? "Saving…" : acknowledged ? "Saved to your record" : pending ? "Awaiting confirmation" : touched.size ? "Unsaved changes · kept in this page" : "Choose a result or add details"}</span>
-        {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" onClick={retryPending}>Retry this save</button> : <button type="submit" className="primary-button" disabled={editDisabled || touched.size === 0}>{sending ? "Saving…" : acknowledged ? "Saved" : "Save feedback"}</button>}
+        {pending && !sending && !workspaceMismatch ? <button type="button" className="primary-button" onClick={retryPending}>Retry this save</button> : <button type="submit" className="primary-button" disabled={editDisabled || touched.size === 0}>{sending ? "Saving…" : acknowledged ? "Saved" : mode === "correction" ? "Save correction" : "Save feedback"}</button>}
       </div>
+      <p className="form-note">AC outcomes and complexity entries are self-reported</p>
+      {feedback && <button type="button" className="text-button correction-button" onClick={toggleCorrection} disabled={locked}>{mode === "correction" ? "Cancel correction" : "Correct saved record"}</button>}
       {pending && !sending && !workspaceMismatch && <p className="form-note">Keep this page open. Retry checks the same submission before sending it again.</p>}
     </form>
-    <SolutionForm item={item} storeId={boundStoreId} drafts={drafts} disabled={sending || pending !== null || error?.conflict === true || workspaceMismatch || touched.size > 0}
-      onPendingChange={handleSolutionPending} onReload={onReload} onWorkspaceMismatch={onWorkspaceMismatch} />
-    </>
+    </div>
   );
 }

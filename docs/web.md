@@ -6,7 +6,7 @@ The Web panel has two views: daily plans with feedback forms, and topic scores.
 React calls FastAPI. FastAPI calls the same Coach service used by the Skill.
 SQLite remains the only learning authority.
 
-The optional code section saves version-bound solution evidence and displays
+The code pane saves version-bound solution evidence and displays
 pending, reviewed, or stale complexity analysis. It does not launch a model.
 The Skill's host session reviews saved code and writes a scoped conclusion through
 the shared core. See [code reviews and learning evidence](reviews.md).
@@ -164,8 +164,11 @@ Select A–F, enter cumulative minutes, and submit one practice at a time.
 Extra fields are optional. Unanswered values are not converted into false or D.
 An untouched field stays unchanged. Explicit clearing stays distinct from omission.
 
-Use progress for continued work. Use correction when the prior record was wrong.
-Both operations keep history and use the current expected revision.
+Save feedback records continued progress and details. Use **Correct saved record**
+when the prior record was wrong. That action changes the button to **Save correction**.
+**Cancel correction** restores the saved fields and clears the correction draft.
+Both operations keep history and use the current expected revision. There is no
+update-mode dropdown.
 Save feedback to an existing attempt. Saving never creates a new redo or retest.
 Result changes use the current practice time. Corrections and same-result
 detail updates retain the saved practice time.
@@ -177,7 +180,7 @@ same submission ID and exact content. Conflicts require review and reload.
 Requests time out after ten seconds. A timeout leaves the outcome uncertain;
 it does not imply that the database rejected the save.
 
-Drafts live only in the current page. Switching cards, dates, or views keeps
+Drafts live only in the current page. Switching problems, dates, or views keeps
 unsaved fields in memory. Each draft belongs to one store, attempt, and saved
 revision. A newer saved revision starts a fresh editor. A confirmed save clears
 its draft. Reloading after a conflict discards that revision's stale input.
@@ -186,22 +189,35 @@ the page discards unsaved input. Retained input is not a saved training record.
 
 ## Interface design
 
-The panel uses an engineering workbench layout. Neutral gray and white surfaces
-keep the green accent on selected actions, focus, and confirmed saves. The compact
-header leads into the selected training date and saved plan. Working text uses
-14–16px. Metadata uses at least 12px. Primary controls have a 44px minimum height.
+The panel follows the approved native-tool layout. A gray problem rail sits beside
+a white code pane and a quiet feedback pane. Blue marks selection, focus, and the
+primary save action. The first saved problem is selected when the plan opens.
+Select another problem in the rail to keep working. Only one editor is visible.
+Working text uses 13–16px. Metadata uses at least 12px. Primary controls have a
+44px minimum height. Smaller screens stack the panes and reflow problem navigation.
 
-The plan is one task list with aligned problem, result, time, and action columns.
-Feedback expands below its task row. Smaller screens stack these fields without
-losing their labels. Thin shared dividers replace separate card outlines.
+Solution code stays visible. It has no separate disclosure. Code and feedback have
+separate save buttons and receipts. Unsaved feedback must be saved before code can
+be submitted for review. A successful code save keeps its text in page memory.
+Changing the feedback revision keeps that text as an unsaved code draft for the
+new revision. A fresh review requires an explicit code submission. Reloading or
+closing the page clears unsaved input. The existing status read restores saved
+code when there is no local draft. A late response never replaces code being typed.
+Evidence from an older feedback revision remains visibly stale and needs an
+explicit submission for the current revision.
 
 Native radio controls provide one explicit A–F choice. No result is selected
 for an unanswered attempt. E and F reveal their optional date fields beside the
 main inputs. Existing date values remain visible so they can be cleared explicitly.
 The result guide is a disclosure at every screen size.
 
+Time and space complexity use native selects beside cumulative time. The options
+include common complexity classes and an unanswered choice. Existing values outside
+the presets remain available exactly as saved. Changing another field does not
+normalize or erase them.
+
 Topic rates appear beside their independent and recorded problem counts.
-Figures and evidence use aligned monospace text within one compact table.
+Figures and evidence use tabular numbers within one compact table.
 The comparison table becomes labeled rows on mobile. Missing data stays distinct
 from zero. Small samples and stable counts keep their existing meanings.
 
