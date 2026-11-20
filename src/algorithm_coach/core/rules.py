@@ -418,6 +418,32 @@ def _derive_state(attempts: list[dict], settings: dict, catalog: list[dict]) -> 
     }
 
 
+def select_with_diagnostics(
+    catalog: list[dict], attempts: list[dict], config: dict,
+    training_date: str, state: dict | None = None, policy: dict | None = None,
+    selection_context: dict | None = None,
+) -> tuple[list[dict], dict | None]:
+    """Select daily candidates and return configured-mix diagnostics.
+
+    Inputs: The same values as select_candidates.
+    Outputs: Candidates and mix diagnostics, or None without a daily_mix.
+    Logic: Use the original selectors unless the learner configured a mix.
+    Dependencies: select_candidates and daily_mix.select_mixed.
+    """
+    settings = validate_config(config)
+    if settings.get("daily_mix") is None:
+        return select_candidates(catalog, attempts, settings, training_date, state, policy, selection_context), None
+    active_policy = validate_policy(default_policy() if policy is None else policy, catalog)
+    if not policy_active(active_policy, training_date):
+        raise CoachError("inactive_policy", "The selected policy does not cover the training date.")
+    _date(training_date, "training_date")
+    state = state if state is not None else _derive_state(attempts, settings, catalog)
+    from .daily_mix import select_mixed
+
+    result = select_mixed(catalog, attempts, settings, training_date, state, active_policy, selection_context)
+    return result["selected"], result["diagnostics"]
+
+
 def select_candidates(
     catalog: list[dict], attempts: list[dict], config: dict,
     training_date: str, state: dict | None = None, policy: dict | None = None,
@@ -437,6 +463,10 @@ def select_candidates(
         raise CoachError("inactive_policy", "The selected policy does not cover the training date.")
     eligible_catalog = filter_catalog(catalog, active_policy)
     state = state if state is not None else _derive_state(attempts, settings, catalog)
+    if settings.get("daily_mix") is not None:
+        from .daily_mix import select_mixed
+
+        return select_mixed(catalog, attempts, settings, training_date, state, active_policy, selection_context)["selected"]
     if settings["training_profile"] == "tokyo-interview-v1":
         from .training_profile import select_profile_candidates
 
