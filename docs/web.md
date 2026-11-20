@@ -215,6 +215,10 @@ A browser reload or tab close discards unsaved input.
 
 ## Interface design
 
+These screenshots show synthetic practice records in the local panel.
+
+![Training record with a dated problem list, a Java solution, and the A–F feedback form.](images/training-record.png)
+
 The panel follows the approved native-tool layout. A gray problem rail sits beside
 a white code pane and a quiet feedback pane. Blue marks selection, focus, and the
 primary save action. The first saved problem is selected when the plan opens.
@@ -247,6 +251,8 @@ Time and space complexity use native selects. The options
 include common complexity classes and an unanswered choice. Existing values outside
 the presets remain available exactly as saved. Changing another field does not
 normalize or erase them.
+
+![Topic scores with completion summaries, a four-week activity chart, and per-topic rates.](images/topic-scores.png)
 
 The scores view opens with summary tiles: recorded problems, independent AC,
 stable problems, practice days, and topics practiced. A daily column chart shows

@@ -54,8 +54,20 @@ Only activation advances this global version. Proposals do not advance it.
 
 Use `latest_revision` for both proposal and activation `--expected-revision` checks.
 Do not use the date-effective revision as the concurrency token.
-For example, tomorrow may still resolve revision 0 while an activated revision 1
-starts next week. The next mutation still expects global revision 1.
+
+Suppose revision 1 is the only activated policy. It covers April 10–16. Each
+lookup below returns `latest_revision: 1`, even after the policy expires.
+
+```mermaid
+flowchart LR
+    accTitle: A bounded policy and its effective revision
+    accDescr: After revision 1 is activated, the global latest revision stays at 1. The baseline applies on April 9 and April 17. Revision 1 applies from April 10 through April 16, inclusive.
+    before["April 9<br/>Baseline revision 0"] --> during["April 10–16<br/>Policy revision 1"]
+    during --> after["April 17<br/>Baseline revision 0"]
+    classDef default fill:transparent,stroke:#8a9bb0
+    classDef accent fill:#e8f1ff,stroke:#3d67aa,color:#102240,stroke-width:2px
+    class during accent
+```
 
 Config and catalog versions are separate context. A proposal records their versions.
 If its context is stale, inspect a new preview and prepare a fresh proposal when
