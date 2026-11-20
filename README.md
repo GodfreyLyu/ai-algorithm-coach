@@ -1,4 +1,4 @@
-<!-- File purpose: Describe the local training loop, setup, tests, and project scope. -->
+<!-- File purpose: Explain local setup, daily training, scheduling, and project scope. -->
 
 # ai-algorithm-coach
 
@@ -8,11 +8,9 @@ The Skill handles the conversation. Python handles the rules. SQLite stores the 
 The local Skill loop needs no database server, model API key, or web service.
 The optional local panel uses React with TypeScript and FastAPI. It displays saved
 plans, records feedback in the same database, and shows topic completion rates.
-See the [Web setup guide](docs/web.md).
 
-Interactive Skill training uses `start-session` to prepare a plan and start or
-reuse that panel. A ready response contains the actual feedback link. Missing
-Web requirements leave chat feedback available and the saved plan intact.
+[Quick start](#quick-start) · [Daily scheduling](#schedule-daily-training) ·
+[Local Web panel](#run-the-local-web-panel)
 
 ## What works
 
@@ -37,24 +35,26 @@ Unfinished work uses the same plan capacity. A large backlog can use every slot.
 The default profile has no phase system. The optional `tokyo-interview-v1` profile
 supports four base slots, one normal supplement, and a justified sixth item.
 Language, daily total, timezone, preferred run time, and review rules are configurable.
-Saving a preferred run time does not create a scheduled task.
 Scope policies constrain eligibility. They do not replace the learning rules.
 
 ## Requirements
 
 - Python 3.12 or later, with `sqlite3` and timezone data.
-- A Skill host that can run local tools and access a private persistent directory.
-- A local disk for a new or compatible schema version 4 database.
+- A private directory on local disk for a schema version 4 database.
+- For chat workflows, a Skill host that can run local commands and read and write that directory.
 
-A text-only chat client cannot guarantee durable feedback.
-The Skill must report that feedback is not saved when it cannot run its tool.
-Support for a particular AI client must be checked in that client.
+The terminal commands also work without an agent. With a text-only or remote
+client that cannot reach your local workspace, use the CLI or local Web panel for
+saved records.
 
 ## Quick start
 
-Run these commands from the repository root. Replace the example data path.
-Keep the data directory outside the repository. Choose your real timezone once.
-`UTC` is the example, not a guess about your location.
+### Set up the workspace
+
+Run the examples from the repository root. Set a private absolute data path
+outside the checkout. If you already have a workspace, use the directory that
+contains its `coach.sqlite3` and skip `init`. For a new workspace, replace `UTC`
+with your training timezone. `plan` saves or reads the first assignment.
 
 ```sh
 export ALGORITHM_COACH_DATA_DIR="/path/to/private/coach-data"
@@ -62,15 +62,75 @@ python3.12 skills/algorithm-coach/scripts/coach.py init --timezone UTC --daily-c
 python3.12 skills/algorithm-coach/scripts/coach.py plan
 ```
 
-An existing empty data directory is not an initialized workspace. If a read returns
-`not_initialized`, confirm the intended path before any new setup. Only initialize
-a new workspace when the user explicitly requests it.
-An incompatible schema returns `schema_mismatch` without changing its data.
-Database conversion belongs to external maintenance, outside the Skill runtime.
+If a command returns `not_initialized`, check the path for your existing store.
+Initialize a new workspace only when you intend to create one. On
+`schema_mismatch`, use a compatible store. Schema conversion is external maintenance.
 
-`--data-dir` applies to one command. Initialization does not register a global path.
-The export above applies to its shell and child processes. Other terminals or
-host sessions may need that path again. Do not edit shell profiles automatically.
+The export applies to the current shell and its child processes. For a desktop
+agent or scheduled task, set it in that session's tool environment or provide the
+absolute data path in the private prompt. Place `--data-dir PATH` before the
+subcommand to select the store for one invocation.
+
+### Load the Skill in your agent
+
+Build the full Skill into a new directory for your host. The bundle includes
+`SKILL.md`, supporting files, and the Python runtime.
+
+```sh
+# Codex
+python3.12 scripts/packaging/build_skill.py --output "$PWD/.agents/skills/algorithm-coach"
+
+# Claude Code
+python3.12 scripts/packaging/build_skill.py --output "$PWD/.claude/skills/algorithm-coach"
+```
+
+Open a local session in this checkout so the agent can use the project Skill.
+If the Skill is missing from the menu, refresh it with a new local session.
+
+- **Codex.** Select `algorithm-coach` in the desktop composer or type
+  `$algorithm-coach` in the CLI. [Codex Skill setup](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
+- **Claude Code.** Type `/algorithm-coach` in the local session.
+  [Claude Code Skill setup](https://code.claude.com/docs/en/skills#choose-where-skills-load)
+- **Ollama with a local model.** Use the Claude Code bundle above. In the same
+  checkout, run `ollama launch claude` and select a local model that supports tool
+  calling. Invoke `/algorithm-coach` in the resulting session. Ollama serves the
+  model. Claude Code loads the Skill and runs its tools.
+  [Ollama and Claude Code](https://docs.ollama.com/integrations/claude-code)
+- **Other agents.** Import the complete bundle using your host's Skill loader.
+  With local shell access and no Skill loader, ask the agent to read the Skill
+  instructions and use the entry script. With plain `ollama run` or a text-only
+  client, run the CLI commands locally. [Standalone bundle](#installable-skill-bundle) and
+  [Skill instructions](skills/algorithm-coach/SKILL.md)
+
+### Create a daily problem set
+
+After selecting the Skill, you can paste a request like this. Supply the data
+path if the host has no configured `ALGORITHM_COACH_DATA_DIR`.
+
+```text
+Use the algorithm-coach Skill and my existing workspace at /path/to/private/coach-data.
+Use plan to save or load today's problem set in the workspace timezone.
+List the problems with their official links.
+```
+
+For a browser session, ask it to start today's training and return the local
+feedback link. The Skill uses `start-session` for this request. [Web setup](#run-the-local-web-panel)
+
+From the terminal, use `plan` to create or reuse the assignment. Use `show` to
+read an existing assignment. Both commands accept `--date YYYY-MM-DD`.
+
+```sh
+python3.12 skills/algorithm-coach/scripts/coach.py plan
+python3.12 skills/algorithm-coach/scripts/coach.py show
+```
+
+The planner uses saved practice, due reviews, and the active scope to select from
+the catalog. Running `plan` again for the same date returns the published plan.
+The next training date can continue the same unfinished attempt. To limit the
+selection or expand the catalog, see [training scope](#set-a-training-scope) and
+[problem metadata](#add-problem-metadata).
+
+### Save feedback
 
 The plan returns stable attempt IDs. Your Skill host uses those IDs internally.
 You can then say, for example, "The first problem is D. I spent 20 minutes."
@@ -87,12 +147,129 @@ python3.12 skills/algorithm-coach/scripts/coach.py feedback \
   --expected-revision 0 \
   --changes '{"result":"D","elapsed_minutes":20}'
 python3.12 skills/algorithm-coach/scripts/coach.py state
-python3.12 skills/algorithm-coach/scripts/coach.py plan
 ```
 
-Calling `plan` twice returns the same published plan. It does not replace feedback.
-The next training date can continue the same unfinished attempt.
-Use `--date YYYY-MM-DD` to request a specific training date.
+## Schedule daily training
+
+Set the daily trigger in your agent or system scheduler. The stored preferred
+run time is informational. The workspace timezone determines the training date.
+
+### Run the Skill on a schedule
+
+Use a local agent task when the run should include the Skill workflow, such as
+processing pending code reviews. Set up the Skill and Web panel once. Use the
+same checkout and private data path for manual and scheduled runs.
+
+- **Codex desktop.** In **Scheduled**, create a daily task for this local project.
+  Choose the local checkout as the execution environment. Mention
+  `$algorithm-coach` in the task prompt. [Codex scheduled tasks](https://learn.chatgpt.com/docs/automations?surface=app)
+- **Claude Code Desktop.** In **Code** → **Scheduled**, create a local task for
+  this folder. Select **Daily** and set the time. [Claude Code scheduled tasks](https://code.claude.com/docs/en/desktop-scheduled-tasks)
+
+For example, set 08:00 in the scheduler and use these instructions for each run.
+
+```text
+Use the algorithm-coach Skill with the existing workspace at /path/to/private/coach-data.
+Follow the daily workflow and use start-session for today's training in the workspace timezone.
+Return the saved problem set and the exact feedback URL when Web status is ready.
+If the panel is unavailable, return the saved plan and the reported reason.
+```
+
+Test the prompt once in a local session. Verify that the task can run Python,
+read and write the chosen workspace, and start and reach the loopback server.
+Keep the computer awake and the desktop app open for local desktop tasks.
+
+### Schedule the CLI directly
+
+Use this path for a scheduled plan with any agent or no agent. On a machine with
+`cron` enabled, add these lines with `crontab -e`. Replace the paths with absolute
+paths to your interpreter, checkout, and existing workspace.
+
+```cron
+COACH_PYTHON="/path/to/bin/python3.12"
+COACH_ENTRY="/path/to/ai-algorithm-coach/skills/algorithm-coach/scripts/coach.py"
+ALGORITHM_COACH_DATA_DIR="/path/to/private/coach-data"
+0 8 * * * "$COACH_PYTHON" "$COACH_ENTRY" plan > "$ALGORITHM_COACH_DATA_DIR/last-scheduled-run.log" 2>&1
+```
+
+This triggers at 08:00 in the scheduler's timezone. To prepare the plan and start
+the panel on that schedule, complete the Web setup below, set `COACH_PYTHON` to
+the absolute path to `.venv-web/bin/python`, and change `plan` to `start-session`.
+Read the session URL and status from `last-scheduled-run.log`.
+
+## Run the local Web panel
+
+### Prepare the Web environment
+
+Use Python 3.12 or later and Node.js 24. Run this setup once from the repository
+root. Use a browser on the same computer as the service. Managed startup is
+available on macOS and Linux.
+
+```sh
+python3.12 -m venv .venv-web
+.venv-web/bin/python -m pip install -r requirements-web.txt
+npm ci --prefix web
+npm run build --prefix web
+```
+
+To launch from an installed Skill, create `web.toml` in the private data directory
+and use absolute paths to the Web interpreter and built UI in this checkout.
+
+```toml
+# File purpose: Point an installed Skill to the local Web environment and assets.
+[web]
+python = "/path/to/ai-algorithm-coach/.venv-web/bin/python"
+static_dir = "/path/to/ai-algorithm-coach/web/dist"
+```
+
+For a portable Skill with its own UI assets, see [standalone Web bundles](docs/web.md#standalone-web-bundle).
+
+### Start, check, or stop a session
+
+In chat, ask the Skill to start today's training and include the feedback link.
+To start from the checkout, use the same private data directory as the Skill.
+
+```sh
+.venv-web/bin/python skills/algorithm-coach/scripts/coach.py start-session
+```
+
+`start-session` saves or reuses the plan and starts or reuses its Web service.
+Open the exact `data.web.url` when `data.web.status` is `ready`. The URL binds the
+date and workspace identity. It contains the actual port. If Web startup fails,
+use the saved plan and give feedback in chat or the CLI.
+
+Inspect or stop the managed Web service with these commands.
+
+```sh
+python3.12 skills/algorithm-coach/scripts/coach.py web status
+python3.12 skills/algorithm-coach/scripts/coach.py web stop
+```
+
+To open the panel for existing plans, use the service URL from `web status` if
+it is ready. To serve the panel without preparing a plan, run the foreground
+server below. Open the URL shown in the terminal. Stop the server with Ctrl+C.
+
+```sh
+.venv-web/bin/python scripts/serve_web.py --data-dir "$ALGORITHM_COACH_DATA_DIR"
+```
+
+### Use the Web panel
+
+The Web panel and Skill use the same SQLite records. The panel reads saved plans.
+Create a missing plan with the Skill or CLI, then click **Refresh** in the panel.
+
+| Feature | What it does |
+| --- | --- |
+| Training record | Browse saved plans by date. Open official problem links and see which attempts have a recorded result. |
+| Feedback | Save A–F, cumulative minutes, and optional details such as complexity and where you got stuck. The panel can open the next unanswered problem after saving. |
+| Corrections and retries | Use **Correct saved record** to fix a prior entry while preserving its history. A committed receipt confirms a save. **Retry save** reuses the same submission to avoid duplicate writes. |
+| Solution editor | Save code and input sizes for a specific feedback revision. See whether the review is pending, reviewed, or stale. The Skill host can analyze pending code in a later session. |
+| Practice activity | View daily result counts over four or twelve weeks, with a chart and table. |
+| Topic scores | See independent completion rates, sample sizes, and stable-mastery counts by language and topic. Select a topic to inspect its saved problem results. |
+
+Scores use each problem's latest valid A–D result in the selected language.
+Each topic's rate is the share of those problems with a self-reported A for
+independent AC. See the [Web guide](docs/web.md) and [feedback meanings](#feedback-meanings).
 
 ## Set a training scope
 
@@ -215,6 +392,8 @@ Do not store private records inside the bundle.
 | `init` | Create the local workspace and save initial settings. |
 | `plan` | Ensure that a plan exists for a training date. |
 | `show` | Read an existing plan. |
+| `start-session` | Prepare a daily plan and start or reuse the local Web service. |
+| `web status` / `web stop` | Inspect or stop the managed Web service for this workspace. |
 | `feedback` | Append progress or a correction with a submission ID. |
 | `history --attempt/--problem` | Read attempt revisions or a problem's practice evidence. |
 | `receipt` | Check one submission. |
@@ -287,8 +466,7 @@ The optional React TypeScript forms and FastAPI adapter preserve the same attemp
 IDs, feedback revisions, and receipts. The Web panel is local-only. It does not
 include accounts, offline queues, plan generation, or policy editing.
 Remote Skill access, a running MCP server, cloud authentication, and deployment
-are not implemented here. A Skill has no built-in scheduler.
-An operating system or external service must trigger scheduled runs.
+are not implemented here.
 
 ## Open source boundary
 
